@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: MIT */
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
@@ -10,7 +9,7 @@
  * effect rather than breaking the build.
  */
 #ifndef GLFW_MOUSE_PASSTHROUGH
-#define GLFW_MOUSE_PASSTHROUGH		0x0002000D
+#define GLFW_MOUSE_PASSTHROUGH    0x0002000D
 #endif
 
 #include <stdlib.h>
@@ -28,7 +27,7 @@
 
 struct graphic_window_state {
     GLFWwindow *handle;
-    uint32_t flags;			/* requested at creation time */
+    uint32_t flags;            /* requested at creation time */
 
     double time_start;
 };
@@ -40,7 +39,7 @@ static struct graphic_window_state window;
 /* ------------------------------------------------------------------ */
 
 bool graphic_platform_window_create(int width, int height, const char *title,
-				    uint32_t flags)
+                                    uint32_t flags)
 {
     GLFWmonitor *monitor = NULL;
 
@@ -48,12 +47,12 @@ bool graphic_platform_window_create(int width, int height, const char *title,
         return false;
     }
 
-	if (!glfwVulkanSupported()) {
+    if (!glfwVulkanSupported()) {
         glfwTerminate();
         return false;
-	}
+    }
 
-	/* GLFW must not create any OpenGL context for us */
+    /* GLFW must not create any OpenGL context for us */
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
     glfwWindowHint(GLFW_RESIZABLE,
@@ -69,11 +68,11 @@ bool graphic_platform_window_create(int width, int height, const char *title,
                     GLFW_FALSE : GLFW_TRUE);
 
     glfwWindowHint(GLFW_MAXIMIZED,
-    	           (flags & GRAPHIC_WINDOW_MAXIMIZED) ? 
+                   (flags & GRAPHIC_WINDOW_MAXIMIZED) ? 
                     GLFW_TRUE : GLFW_FALSE);
 
     glfwWindowHint(GLFW_FOCUSED,
-    	           (flags & GRAPHIC_WINDOW_UNFOCUSED) ?
+                   (flags & GRAPHIC_WINDOW_UNFOCUSED) ?
                     GLFW_FALSE : GLFW_TRUE);
 
     glfwWindowHint(GLFW_FLOATING,
@@ -81,11 +80,11 @@ bool graphic_platform_window_create(int width, int height, const char *title,
                     GLFW_TRUE : GLFW_FALSE);
 
     glfwWindowHint(GLFW_TRANSPARENT_FRAMEBUFFER,
-    	           (flags & GRAPHIC_WINDOW_TRANSPARENT) ?
+                   (flags & GRAPHIC_WINDOW_TRANSPARENT) ?
                     GLFW_TRUE : GLFW_FALSE);
 
     glfwWindowHint(GLFW_SCALE_TO_MONITOR,
-    	           (flags & GRAPHIC_WINDOW_HIGHDPI) ?
+                   (flags & GRAPHIC_WINDOW_HIGHDPI) ?
                     GLFW_TRUE : GLFW_FALSE);
 
     glfwWindowHint(GLFW_MOUSE_PASSTHROUGH,
@@ -119,6 +118,15 @@ void graphic_platform_window_destroy(void)
     }
 
     glfwTerminate();
+}
+
+/* ------------------------------------------------------------------ */
+/* Vulkan facing hooks                                                */
+/* ------------------------------------------------------------------ */
+
+const char *const *graphic_platform_instance_extensions_get(uint32_t *count)
+{
+    return glfwGetRequiredInstanceExtensions(count);
 }
 
 /* ------------------------------------------------------------------ */

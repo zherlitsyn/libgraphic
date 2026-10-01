@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: MIT */
 #ifndef GRAPHIC_PLATFORM_H
 #define GRAPHIC_PLATFORM_H
 
@@ -20,7 +19,8 @@
  */
 
 bool graphic_platform_window_create(int width, int height, const char *title,
-				    uint32_t flags);
+                                    uint32_t flags);
 void graphic_platform_window_destroy(void);
+const char *const *graphic_platform_instance_extensions_get(uint32_t *count);
 
 #endif /* GRAPHIC_PLATFORM_H */
