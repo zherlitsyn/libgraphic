@@ -129,6 +129,13 @@ const char *const *graphic_platform_instance_extensions_get(uint32_t *count)
     return glfwGetRequiredInstanceExtensions(count);
 }
 
+bool graphic_platform_surface_create(VkInstance instance,
+                                     VkSurfaceKHR *surface)
+{
+    return glfwCreateWindowSurface(instance, window.handle, NULL,
+                                   surface) == VK_SUCCESS;
+}
+
 /* ------------------------------------------------------------------ */
 /* window state queries                                               */
 /* ------------------------------------------------------------------ */

@@ -22,5 +22,7 @@ bool graphic_platform_window_create(int width, int height, const char *title,
                                     uint32_t flags);
 void graphic_platform_window_destroy(void);
 const char *const *graphic_platform_instance_extensions_get(uint32_t *count);
+bool graphic_platform_surface_create(VkInstance instance,
+                                     VkSurfaceKHR *surface);
 
 #endif /* GRAPHIC_PLATFORM_H */
