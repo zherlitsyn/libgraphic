@@ -136,6 +136,18 @@ bool graphic_platform_surface_create(VkInstance instance,
                                    surface) == VK_SUCCESS;
 }
 
+void graphic_platform_framebuffer_size_get(uint32_t *width, uint32_t *height)
+{
+    int w = 0;
+    int h = 0;
+
+    if (window.handle != NULL)
+        glfwGetFramebufferSize(window.handle, &w, &h);
+
+    *width  = (uint32_t)w;
+    *height = (uint32_t)h;
+}
+
 /* ------------------------------------------------------------------ */
 /* window state queries                                               */
 /* ------------------------------------------------------------------ */

@@ -1,3 +1,4 @@
+#define GRAPHIC_MAX_SWAPCHAIN_IMAGES    8
 #define GRAPHIC_INVALID_QUEUE_FAMILY    UINT32_MAX
 
 #include <stdio.h>
@@ -22,6 +23,15 @@ struct graphic_backend {
     VkDevice device;
     VkQueue graphics_queue;
     VkQueue present_queue;
+
+    VkSwapchainKHR swapchain;
+    VkFormat swapchain_format;
+    VkExtent2D swapchain_extent;
+    uint32_t swapchain_image_count;
+    VkImage swapchain_images[GRAPHIC_MAX_SWAPCHAIN_IMAGES];
+    VkImageView swapchain_image_views[GRAPHIC_MAX_SWAPCHAIN_IMAGES];
+
+    bool vsync;
     bool validation;
 };
 
@@ -319,12 +329,171 @@ static bool device_create(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* swapchain and depth                                                */
+/* ------------------------------------------------------------------ */
+
+static VkSurfaceFormatKHR surface_format_pick(void)
+{
+    VkSurfaceFormatKHR formats[32];
+    uint32_t count = 32;
+
+    vkGetPhysicalDeviceSurfaceFormatsKHR(backend.physical_device,
+                                         backend.surface,
+                                         &count,
+                                         formats);
+
+    for (uint32_t i = 0; i < count; i++) {
+        if (formats[i].format     == VK_FORMAT_B8G8R8A8_UNORM &&
+            formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+            return formats[i];
+    }
+
+    return formats[0];
+}
+
+static VkPresentModeKHR present_mode_pick(void)
+{
+    VkPresentModeKHR modes[8];
+    uint32_t count = 8;
+
+    if (backend.vsync)
+        return VK_PRESENT_MODE_FIFO_KHR; /* always supported */
+
+    vkGetPhysicalDeviceSurfacePresentModesKHR(backend.physical_device,
+                                              backend.surface,
+                                              &count,
+                                              modes);
+
+    for (uint32_t i = 0; i < count; i++) {
+        if (modes[i] == VK_PRESENT_MODE_MAILBOX_KHR)
+            return modes[i];
+    }
+
+    return VK_PRESENT_MODE_FIFO_KHR;
+}
+
+static bool swapchain_create(void)
+{
+    VkSurfaceCapabilitiesKHR capabilities;
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(backend.physical_device,
+                                              backend.surface,
+                                              &capabilities);
+
+    uint32_t width;
+    uint32_t height;
+    graphic_platform_framebuffer_size_get(&width, &height);
+    if (width == 0 || height == 0)
+        return false; /* minimised, retry later */
+
+    if (capabilities.currentExtent.width != UINT32_MAX) {
+        backend.swapchain_extent = capabilities.currentExtent;
+    } else {
+        backend.swapchain_extent.width  = width;
+        backend.swapchain_extent.height = height;
+    }
+
+    uint32_t image_count = capabilities.minImageCount + 1;
+    if (capabilities.maxImageCount > 0 &&
+        image_count > capabilities.maxImageCount)
+        image_count = capabilities.maxImageCount;
+
+    if (image_count > GRAPHIC_MAX_SWAPCHAIN_IMAGES)
+        image_count = GRAPHIC_MAX_SWAPCHAIN_IMAGES;
+
+    VkSurfaceFormatKHR format = surface_format_pick();
+
+    VkSwapchainCreateInfoKHR info = { 0 };
+    info.sType            = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+    info.surface          = backend.surface;
+    info.minImageCount    = image_count;
+    info.imageFormat      = format.format;
+    info.imageColorSpace  = format.colorSpace;
+    info.imageExtent      = backend.swapchain_extent;
+    info.imageArrayLayers = 1;
+    info.imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    info.preTransform     = capabilities.currentTransform;
+    info.compositeAlpha   = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+    info.presentMode      = present_mode_pick();
+    info.clipped          = VK_TRUE;
+
+    uint32_t families[2] = { backend.graphics_family,
+                             backend.present_family };
+
+    if (backend.graphics_family != backend.present_family) {
+        info.imageSharingMode      = VK_SHARING_MODE_CONCURRENT;
+        info.queueFamilyIndexCount = 2;
+        info.pQueueFamilyIndices   = families;
+    } else {
+        info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    }
+
+    if (vkCreateSwapchainKHR(backend.device,
+                             &info,
+                             NULL,
+                             &backend.swapchain) != VK_SUCCESS)
+        return false;
+
+    backend.swapchain_format      = format.format;
+    backend.swapchain_image_count = GRAPHIC_MAX_SWAPCHAIN_IMAGES;
+    vkGetSwapchainImagesKHR(backend.device,
+                            backend.swapchain,
+                            &backend.swapchain_image_count,
+                            backend.swapchain_images);
+
+    for (uint32_t i = 0; i < backend.swapchain_image_count; i++) {
+        VkImageViewCreateInfo view = { 0 };
+        view.sType                       = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        view.image                       = backend.swapchain_images[i];
+        view.viewType                    = VK_IMAGE_VIEW_TYPE_2D;
+        view.format                      = backend.swapchain_format;
+        view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        view.subresourceRange.levelCount = 1;
+        view.subresourceRange.layerCount = 1;
+
+        if (vkCreateImageView(backend.device,
+                              &view,
+                              NULL,
+                              &backend.swapchain_image_views[i]) != VK_SUCCESS)
+            return false;
+    }
+
+    fprintf(stderr, "[graphic] swapchain: %ux%u, %u images, format %d, "
+                    "present mode %d\n",
+                    backend.swapchain_extent.width,
+                    backend.swapchain_extent.height,
+                    backend.swapchain_image_count,
+                    (int)format.format,
+                    (int)info.presentMode);
+
+    return true;
+}
+
+static void swapchain_destroy(void)
+{
+    for (uint32_t i = 0; i < backend.swapchain_image_count; i++) {
+        if (backend.swapchain_image_views[i] != VK_NULL_HANDLE)
+            vkDestroyImageView(backend.device,
+                               backend.swapchain_image_views[i],
+                               NULL);
+
+        backend.swapchain_image_views[i] = VK_NULL_HANDLE;
+    }
+
+    if (backend.swapchain != VK_NULL_HANDLE)
+        vkDestroySwapchainKHR(backend.device, backend.swapchain, NULL);
+
+    backend.swapchain             = VK_NULL_HANDLE;
+    backend.swapchain_image_count = 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* initialisation                                                     */
 /* ------------------------------------------------------------------ */
 
  bool graphic_backend_init(int width, int height, const char *title,
                            uint32_t flags)
  {
+    backend.vsync      = (flags & GRAPHIC_WINDOW_VSYNC)      != 0;
     backend.validation = (flags & GRAPHIC_WINDOW_VALIDATION) != 0;
 
     if (!graphic_platform_window_create(width, height, title, flags))
@@ -342,6 +511,9 @@ static bool device_create(void)
     if (!device_create())
         return false;
 
+    if (!swapchain_create())
+        return false;
+
     return true;
  }
 
@@ -353,6 +525,8 @@ void graphic_backend_shutdown(void)
 {
     if (backend.device != VK_NULL_HANDLE)
         vkDeviceWaitIdle(backend.device);
+
+    swapchain_destroy();
 
     if (backend.device != VK_NULL_HANDLE)
         vkDestroyDevice(backend.device, NULL);

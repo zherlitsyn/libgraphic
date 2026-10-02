@@ -20,9 +20,15 @@
 
 bool graphic_platform_window_create(int width, int height, const char *title,
                                     uint32_t flags);
+
 void graphic_platform_window_destroy(void);
+
 const char *const *graphic_platform_instance_extensions_get(uint32_t *count);
+
 bool graphic_platform_surface_create(VkInstance instance,
                                      VkSurfaceKHR *surface);
+
+/* drawable size in pixels; 0x0 while minimised */
+void graphic_platform_framebuffer_size_get(uint32_t *width, uint32_t *height);
 
 #endif /* GRAPHIC_PLATFORM_H */
