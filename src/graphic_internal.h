@@ -6,4 +6,6 @@
 
 #include "graphic.h"
 
+#define GRAPHIC_FRAMES_IN_FLIGHT    1
+
 #endif /* GRAPHIC_INTERNAL_H */

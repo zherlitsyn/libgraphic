@@ -13,11 +13,15 @@ int main(void)
                              GRAPHIC_WINDOW_VSYNC     |
                              GRAPHIC_WINDOW_VALIDATION);
 
-    if (!graphic_window(960, 540, "graphic - window test"))
+    if (!graphic_window(960, 480, "graphic - window test"))
         return 1;
 
     while (!graphic_window_should_close()) {
         graphic_drawing_begin();
+
+        graphic_color_t background = { 88, 88, 88, 255 };
+        graphic_background_clear(background);
+
         graphic_drawing_end();
     }
 

@@ -1,6 +1,3 @@
-#define GRAPHIC_MAX_SWAPCHAIN_IMAGES    8
-#define GRAPHIC_INVALID_QUEUE_FAMILY    UINT32_MAX
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -10,6 +7,19 @@
 #include "graphic_internal.h"
 #include "graphic_backend.h"
 #include "graphic_platform.h"
+
+#define GRAPHIC_MAX_SWAPCHAIN_IMAGES    8
+#define GRAPHIC_INVALID_QUEUE_FAMILY    UINT32_MAX
+
+/*
+ * Per frame in flight resources. Everything the CPU writes while the
+ * GPU is still reading the previous frame must be duplicated here.
+ */
+struct graphic_frame {
+    VkCommandBuffer command_buffer;
+    VkSemaphore image_available;
+    VkFence in_flight;
+};
 
 struct graphic_backend {
     VkInstance instance;
@@ -30,6 +40,22 @@ struct graphic_backend {
     uint32_t swapchain_image_count;
     VkImage swapchain_images[GRAPHIC_MAX_SWAPCHAIN_IMAGES];
     VkImageView swapchain_image_views[GRAPHIC_MAX_SWAPCHAIN_IMAGES];
+
+    /*
+     * One per swapchain image, not per frame in flight: the present
+     * engine gives no signal telling us when it stopped waiting on
+     * this semaphore, so it may only be reused once the image it
+     * belongs to comes back from acquire.
+     */
+    VkSemaphore render_finished[GRAPHIC_MAX_SWAPCHAIN_IMAGES];
+
+    VkCommandPool command_pool;
+    struct graphic_frame frames[GRAPHIC_FRAMES_IN_FLIGHT];
+
+    uint32_t frame_index;
+    uint32_t image_index;
+    VkClearColorValue clear_color;
+    bool frame_active;
 
     bool vsync;
     bool validation;
@@ -410,7 +436,8 @@ static bool swapchain_create(void)
     info.imageColorSpace  = format.colorSpace;
     info.imageExtent      = backend.swapchain_extent;
     info.imageArrayLayers = 1;
-    info.imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    info.imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                            VK_IMAGE_USAGE_TRANSFER_DST_BIT;
     info.preTransform     = capabilities.currentTransform;
     info.compositeAlpha   = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     info.presentMode      = present_mode_pick();
@@ -440,6 +467,9 @@ static bool swapchain_create(void)
                             &backend.swapchain_image_count,
                             backend.swapchain_images);
 
+    VkSemaphoreCreateInfo semaphore = { 0 };
+    semaphore.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
     for (uint32_t i = 0; i < backend.swapchain_image_count; i++) {
         VkImageViewCreateInfo view = { 0 };
         view.sType                       = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -454,6 +484,12 @@ static bool swapchain_create(void)
                               &view,
                               NULL,
                               &backend.swapchain_image_views[i]) != VK_SUCCESS)
+            return false;
+
+        if (vkCreateSemaphore(backend.device,
+                              &semaphore,
+                              NULL,
+                              &backend.render_finished[i]) != VK_SUCCESS)
             return false;
     }
 
@@ -476,7 +512,13 @@ static void swapchain_destroy(void)
                                backend.swapchain_image_views[i],
                                NULL);
 
+        if (backend.render_finished[i] != VK_NULL_HANDLE)
+            vkDestroySemaphore(backend.device,
+                               backend.render_finished[i],
+                               NULL);
+
         backend.swapchain_image_views[i] = VK_NULL_HANDLE;
+        backend.render_finished[i]       = VK_NULL_HANDLE;
     }
 
     if (backend.swapchain != VK_NULL_HANDLE)
@@ -484,6 +526,60 @@ static void swapchain_destroy(void)
 
     backend.swapchain             = VK_NULL_HANDLE;
     backend.swapchain_image_count = 0;
+}
+
+/* ------------------------------------------------------------------ */
+/* per frame resources                                                 */
+/* ------------------------------------------------------------------ */
+
+static bool frames_create(void)
+{
+    VkCommandPoolCreateInfo pool = { 0 };
+    pool.sType            = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    pool.flags            = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    pool.queueFamilyIndex = backend.graphics_family;
+
+    if (vkCreateCommandPool(backend.device,
+                            &pool,
+                            NULL,
+                            &backend.command_pool) != VK_SUCCESS)
+        return false;
+
+    VkSemaphoreCreateInfo semaphore = { 0 };
+    semaphore.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+    VkFenceCreateInfo fence = { 0 };
+    fence.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fence.flags = VK_FENCE_CREATE_SIGNALED_BIT; /* no deadlock first frame */
+
+    for (uint32_t i = 0; i < GRAPHIC_FRAMES_IN_FLIGHT; i++) {
+        struct graphic_frame *frame = &backend.frames[i];
+
+        VkCommandBufferAllocateInfo allocate = { 0 };
+        allocate.sType       = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+        allocate.commandPool = backend.command_pool;
+        allocate.level       = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+        allocate.commandBufferCount = 1;
+
+        if (vkAllocateCommandBuffers(backend.device,
+                                     &allocate,
+                                     &frame->command_buffer) != VK_SUCCESS)
+            return false;
+
+        if (vkCreateSemaphore(backend.device,
+                              &semaphore,
+                              NULL,
+                              &frame->image_available) != VK_SUCCESS)
+            return false;
+
+        if (vkCreateFence(backend.device,
+                          &fence,
+                          NULL,
+                          &frame->in_flight) != VK_SUCCESS)
+            return false;
+    }
+
+    return true;
 }
 
 /* ------------------------------------------------------------------ */
@@ -514,8 +610,187 @@ static void swapchain_destroy(void)
     if (!swapchain_create())
         return false;
 
+    if (!frames_create())
+        return false;
+
     return true;
- }
+}
+
+/* ------------------------------------------------------------------ */
+/* barriers                                                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * synchronization2 barrier. Both stage and access masks are 64 bit
+ * here, and NONE is a real value rather than the TOP_OF_PIPE hack the
+ * original API forced on us.
+ */
+static void image_barrier(VkCommandBuffer       command_buffer,
+                          VkImage               image,
+                          VkImageAspectFlags    aspect,
+                          VkImageLayout         old_layout,
+                          VkImageLayout         new_layout,
+                          VkPipelineStageFlags2 source_stage,
+                          VkAccessFlags2        source_access,
+                          VkPipelineStageFlags2 destination_stage,
+                          VkAccessFlags2        destination_access)
+{
+    VkImageMemoryBarrier2 barrier = { 0 };
+    barrier.sType               = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+    barrier.srcStageMask        = source_stage;
+    barrier.srcAccessMask       = source_access;
+    barrier.dstStageMask        = destination_stage;
+    barrier.dstAccessMask       = destination_access;
+    barrier.oldLayout           = old_layout;
+    barrier.newLayout           = new_layout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image               = image;
+
+    barrier.subresourceRange.aspectMask = aspect;
+    barrier.subresourceRange.levelCount = VK_REMAINING_MIP_LEVELS;
+    barrier.subresourceRange.layerCount = VK_REMAINING_ARRAY_LAYERS;
+
+    VkDependencyInfo dependency = { 0 };
+    dependency.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    dependency.imageMemoryBarrierCount = 1;
+    dependency.pImageMemoryBarriers    = &barrier;
+
+    vkCmdPipelineBarrier2(command_buffer, &dependency);
+}
+
+/* ------------------------------------------------------------------ */
+/* frame begin                                                         */
+/* ------------------------------------------------------------------ */
+
+void graphic_backend_clear_color_set(graphic_color_t color)
+{
+    backend.clear_color.float32[0] = (float)color.r / 255.0f;
+    backend.clear_color.float32[1] = (float)color.g / 255.0f;
+    backend.clear_color.float32[2] = (float)color.b / 255.0f;
+    backend.clear_color.float32[3] = (float)color.a / 255.0f;
+}
+
+bool graphic_backend_frame_begin(void)
+{
+    struct graphic_frame *frame = &backend.frames[backend.frame_index];
+    
+    vkWaitForFences(backend.device,
+                    1,
+                    &frame->in_flight,
+                    VK_TRUE,
+                    UINT64_MAX);
+
+    VkResult result;
+    result = vkAcquireNextImageKHR(backend.device,
+                                   backend.swapchain,
+                                   UINT64_MAX,
+                                   frame->image_available,
+                                   VK_NULL_HANDLE,
+                                   &backend.image_index);
+
+    if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
+        return false;
+
+    /* reset only now: an early return above must leave it signalled */
+    vkResetFences(backend.device, 1, &frame->in_flight);
+
+    VkCommandBufferBeginInfo begin = { 0 };
+    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+    vkResetCommandBuffer(frame->command_buffer, 0);
+    vkBeginCommandBuffer(frame->command_buffer, &begin);
+
+    backend.frame_active = true;
+
+    return true;
+}
+
+/* ------------------------------------------------------------------ */
+/* submit and present                                                  */
+/* ------------------------------------------------------------------ */
+
+void graphic_backend_frame_end(void)
+{
+    struct graphic_frame *frame = &backend.frames[backend.frame_index];
+    VkCommandBuffer command_buffer = frame->command_buffer;
+
+    if (!backend.frame_active)
+        return;
+
+    /*
+     * For now the whole frame is one clear, done as a transfer: the
+     * image moves to a layout a transfer may write, is cleared, and
+     * moves on to the layout the presentation engine reads.
+     */
+    image_barrier(command_buffer,
+                  backend.swapchain_images[backend.image_index], /* image */
+                  VK_IMAGE_ASPECT_COLOR_BIT,                    /* aspect */
+                  VK_IMAGE_LAYOUT_UNDEFINED,                /* old_layout */  
+                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,     /* new_layout */
+                  VK_PIPELINE_STAGE_2_CLEAR_BIT,          /* source_stage */
+                  VK_ACCESS_2_NONE,                      /* source_access */
+                  VK_PIPELINE_STAGE_2_CLEAR_BIT,     /* destination_stage */
+                  VK_ACCESS_2_TRANSFER_WRITE_BIT);  /* destination_access */
+
+    VkImageSubresourceRange range = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+
+    vkCmdClearColorImage(command_buffer,
+                         backend.swapchain_images[backend.image_index],
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                         &backend.clear_color, 1, &range);
+
+    image_barrier(command_buffer,
+                  backend.swapchain_images[backend.image_index], /* image */
+                  VK_IMAGE_ASPECT_COLOR_BIT,                    /* aspect */
+                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,     /* old_layout */
+                  VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,          /* new_layout */
+                  VK_PIPELINE_STAGE_2_CLEAR_BIT,          /* source_stage */
+                  VK_ACCESS_2_TRANSFER_WRITE_BIT,        /* source_access */
+                  VK_PIPELINE_STAGE_2_NONE,          /* destination_stage */
+                  VK_ACCESS_2_NONE);                /* destination_access */
+
+    vkEndCommandBuffer(command_buffer);
+
+    VkSemaphoreSubmitInfo wait = { 0 };
+    wait.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+    wait.semaphore = frame->image_available;
+    wait.stageMask = VK_PIPELINE_STAGE_2_CLEAR_BIT;
+
+    VkSemaphoreSubmitInfo signal = { 0 };
+    signal.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
+    signal.semaphore = backend.render_finished[backend.image_index];
+    signal.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+
+    VkCommandBufferSubmitInfo command = { 0 };
+    command.sType         = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+    command.commandBuffer = command_buffer;
+
+    VkSubmitInfo2 submit = { 0 };
+    submit.sType                    = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+    submit.waitSemaphoreInfoCount   = 1;
+    submit.pWaitSemaphoreInfos      = &wait;
+    submit.commandBufferInfoCount   = 1;
+    submit.pCommandBufferInfos      = &command;
+    submit.signalSemaphoreInfoCount = 1;
+    submit.pSignalSemaphoreInfos    = &signal;
+
+    vkQueueSubmit2(backend.graphics_queue, 1, &submit, frame->in_flight);
+
+    VkPresentInfoKHR present = { 0 };
+    present.sType              = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    present.waitSemaphoreCount = 1;
+    present.pWaitSemaphores    = &backend.render_finished[backend.image_index];
+    present.swapchainCount     = 1;
+    present.pSwapchains        = &backend.swapchain;
+    present.pImageIndices      = &backend.image_index;
+
+    vkQueuePresentKHR(backend.present_queue, &present);
+
+    backend.frame_active = false;
+    backend.frame_index  = (backend.frame_index + 1) % GRAPHIC_FRAMES_IN_FLIGHT;
+}
 
 /* ------------------------------------------------------------------ */
 /* shutdown                                                           */
@@ -525,6 +800,25 @@ void graphic_backend_shutdown(void)
 {
     if (backend.device != VK_NULL_HANDLE)
         vkDeviceWaitIdle(backend.device);
+
+    for (uint32_t i = 0; i < GRAPHIC_FRAMES_IN_FLIGHT; i++) {
+        struct graphic_frame *frame = &backend.frames[i];
+
+        if (frame->image_available != VK_NULL_HANDLE)
+            vkDestroySemaphore(backend.device,
+                               frame->image_available,
+                               NULL);
+
+        if (frame->in_flight != VK_NULL_HANDLE)
+            vkDestroyFence(backend.device,
+                           frame->in_flight,
+                           NULL);
+    }
+
+    if (backend.command_pool != VK_NULL_HANDLE)
+        vkDestroyCommandPool(backend.device,
+                             backend.command_pool,
+                             NULL);
 
     swapchain_destroy();
 

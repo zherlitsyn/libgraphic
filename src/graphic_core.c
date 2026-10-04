@@ -14,6 +14,7 @@
 struct graphic_core_state {
     uint32_t flags;
     bool initialised;
+    bool frame_valid;   /* false when the frame was skipped */
 };
 
 static struct graphic_core_state core;
@@ -44,9 +45,31 @@ void graphic_window_close(void)
 
 void graphic_drawing_begin(void)
 {
+    core.frame_valid = graphic_backend_frame_begin();
+}
+
+/*
+ * Only remembered here: the clear happens when the frame is recorded,
+ * as the first thing done to the window image.
+ */
+void graphic_background_clear(graphic_color_t color)
+{
+    graphic_backend_clear_color_set(color);
+}
+
+/*
+ * Submits and presents the frame, if one was begun.
+ */
+void graphic_screen_buffer_swap(void)
+{
+    if (core.frame_valid) {
+        graphic_backend_frame_end();
+        core.frame_valid = false;
+    }
 }
 
 void graphic_drawing_end(void)
 {
+    graphic_screen_buffer_swap();
     graphic_events_poll();
 }

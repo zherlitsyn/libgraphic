@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "graphic_color.h"
+
 /*
  * Public API of the graphic library: an immediate mode drawing layer
  * over Vulkan, GLFW and VMA.
@@ -57,5 +59,13 @@ double graphic_time_get(void);
 
 void graphic_drawing_begin(void);
 void graphic_drawing_end(void);
+
+/*
+ * graphic_drawing_end() is the sum of these three plus the frame
+ * limiter. Call them yourself instead of it when you want full
+ * control over the shape of the frame.
+ */
+void graphic_screen_buffer_swap(void); /* record, submit, present */
+void graphic_background_clear(graphic_color_t color);
 
 #endif /* GRAPHIC_H */
