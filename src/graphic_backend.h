@@ -6,7 +6,11 @@
 
 #include "graphic_internal.h"
 
-bool graphic_backend_init(int width, int height, const char *title, uint32_t flags);
+bool graphic_backend_init(int         width,
+                          int         height,
+                          const char *title,
+                          uint32_t    flags);
+
 void graphic_backend_shutdown(void);
 
 /*
@@ -17,5 +21,6 @@ bool graphic_backend_frame_begin(void);
 void graphic_backend_frame_end(void);
 
 void graphic_backend_clear_color_set(graphic_color_t color);
+bool graphic_backend_swapchain_recreate(void);
 
 #endif /* GRAPHIC_BACKEND_H */

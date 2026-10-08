@@ -40,19 +40,113 @@ if(NOT glfw3_FOUND)
 endif()
 
 # --------------------------------------------------------------------
+# shaders
+#
+# SPIR-V is embedded as a C array, so nothing is read from disk at run
+# time. Two ways to get there, in order of preference:
+#
+#   glslangValidator   emits the whole header itself
+#   glslc              emits the array, cmake/ wraps it
+# --------------------------------------------------------------------
+
+set(GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY "${GENERATED_DIR}")
+
+set(SHADER_COMPILER "")
+
+find_program(GLSLANG_VALIDATOR
+    NAMES glslangValidator
+    HINTS "$ENV{VULKAN_SDK}/bin")
+find_program(GLSLC NAMES glslc HINTS "$ENV{VULKAN_SDK}/bin")
+
+# a compiler that is present but cannot run is worse than none,
+# so it is tried once here rather than at build time
+if(GLSLANG_VALIDATOR)
+    execute_process(COMMAND "${GLSLANG_VALIDATOR}" --version
+        RESULT_VARIABLE status
+        OUTPUT_QUIET ERROR_QUIET)
+    if(status EQUAL 0)
+        set(SHADER_COMPILER glslang)
+    else()
+        message(WARNING
+            "glslangValidator found but not runnable, "
+            "trying glslc")
+    endif()
+endif()
+
+if(NOT SHADER_COMPILER AND GLSLC)
+    execute_process(COMMAND "${GLSLC}" --version
+        RESULT_VARIABLE status
+        OUTPUT_QUIET ERROR_QUIET)
+    if(status EQUAL 0)
+        set(SHADER_COMPILER glslc)
+    endif()
+endif()
+
+if(NOT SHADER_COMPILER)
+    message(FATAL_ERROR
+        "no usable shader compiler: install the Vulkan SDK, which "
+        "brings both glslangValidator and glslc")
+else()
+    message(STATUS "graphic: compiling shaders with ${SHADER_COMPILER}")
+
+    set(SHADER_HEADERS "")
+
+    function(graphic_compile_shader source stage)
+        get_filename_component(name "${source}" NAME_WE)
+        set(output "${GENERATED_DIR}/${name}.${stage}.h")
+        set(input "${CMAKE_CURRENT_SOURCE_DIR}/${source}")
+
+        if(SHADER_COMPILER STREQUAL glslang)
+            add_custom_command(
+                OUTPUT "${output}"
+                COMMAND "${GLSLANG_VALIDATOR}"
+                    -V --vn ${name}_${stage}_spv
+                    -o "${output}" "${input}"
+                DEPENDS "${input}"
+                COMMENT "compiling ${source}"
+                VERBATIM)
+        else()
+            add_custom_command(
+                OUTPUT "${output}"
+                COMMAND ${CMAKE_COMMAND}
+                    -DGLSLC=${GLSLC}
+                    -DSOURCE=${input}
+                    -DOUTPUT=${output}
+                    -DVARIABLE=${name}_${stage}_spv
+                    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/compile_shader_glslc.cmake"
+                DEPENDS "${input}"
+                COMMENT "compiling ${source}"
+                VERBATIM)
+        endif()
+
+        set(SHADER_HEADERS ${SHADER_HEADERS} "${output}" PARENT_SCOPE)
+    endfunction()
+
+    graphic_compile_shader(shaders/default.vert vert)
+    graphic_compile_shader(shaders/default.frag frag)
+
+    add_custom_target(graphic_shaders DEPENDS ${SHADER_HEADERS})
+endif()
+
+# --------------------------------------------------------------------
 # the library
 # --------------------------------------------------------------------
 
 add_library(graphic STATIC
     src/graphic_core.c
     src/graphic_backend.c
+    src/graphic_pipeline.c
     src/graphic_platform_glfw.c)
+
+add_dependencies(graphic graphic_shaders)
 
 target_include_directories(graphic
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     PRIVATE
-        "${CMAKE_CURRENT_SOURCE_DIR}/src")
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        "${GENERATED_DIR}")
 
 target_link_libraries(graphic
     PUBLIC Vulkan::Vulkan

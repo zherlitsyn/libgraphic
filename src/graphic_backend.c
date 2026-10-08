@@ -7,6 +7,7 @@
 #include "graphic_internal.h"
 #include "graphic_backend.h"
 #include "graphic_platform.h"
+#include "graphic_pipeline.h"
 
 #define GRAPHIC_MAX_SWAPCHAIN_IMAGES    8
 #define GRAPHIC_INVALID_QUEUE_FAMILY    UINT32_MAX
@@ -56,6 +57,8 @@ struct graphic_backend {
     uint32_t image_index;
     VkClearColorValue clear_color;
     bool frame_active;
+    bool swapchain_dirty;
+    bool swapchain_ready; /* window image already transitioned */
 
     bool vsync;
     bool validation;
@@ -67,10 +70,11 @@ static struct graphic_backend backend;
 /* instance                                                            */
 /* ------------------------------------------------------------------ */
 
-static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
-                                                     VkDebugUtilsMessageTypeFlagsEXT types,
-                                                     const VkDebugUtilsMessengerCallbackDataEXT *data,
-                                                     void *user_data)
+static VKAPI_ATTR VkBool32 VKAPI_CALL
+    debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT      severity,
+                   VkDebugUtilsMessageTypeFlagsEXT             types,
+                   const VkDebugUtilsMessengerCallbackDataEXT *data,
+                   void                                       *user_data)
 {
     (void)types;
     (void)user_data;
@@ -184,8 +188,9 @@ static bool instance_create(const char *title)
 /* physical device                                                    */
 /* ------------------------------------------------------------------ */
 
-static bool queue_families_find(VkPhysicalDevice device, uint32_t *graphics,
-                uint32_t *present)
+static bool queue_families_find(VkPhysicalDevice device,
+                                uint32_t        *graphics,
+                                uint32_t        *present)
 {
     VkQueueFamilyProperties families[16];
     uint32_t count = 16;
@@ -222,8 +227,9 @@ static bool queue_families_find(VkPhysicalDevice device, uint32_t *graphics,
            *present  != GRAPHIC_INVALID_QUEUE_FAMILY;
 }
 
-static bool device_suitable(VkPhysicalDevice device, uint32_t *graphics,
-                            uint32_t *present)
+static bool device_suitable(VkPhysicalDevice device,
+                            uint32_t        *graphics,
+                            uint32_t        *present)
 {
     VkPhysicalDeviceVulkan13Features features13 = { 0 };
     VkPhysicalDeviceFeatures2 features = { 0 };
@@ -436,8 +442,7 @@ static bool swapchain_create(void)
     info.imageColorSpace  = format.colorSpace;
     info.imageExtent      = backend.swapchain_extent;
     info.imageArrayLayers = 1;
-    info.imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
-                            VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    info.imageUsage       = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     info.preTransform     = capabilities.currentTransform;
     info.compositeAlpha   = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     info.presentMode      = present_mode_pick();
@@ -528,6 +533,14 @@ static void swapchain_destroy(void)
     backend.swapchain_image_count = 0;
 }
 
+bool graphic_backend_swapchain_recreate(void)
+{
+    vkDeviceWaitIdle(backend.device);
+    swapchain_destroy();
+
+    return swapchain_create();
+}
+
 /* ------------------------------------------------------------------ */
 /* per frame resources                                                 */
 /* ------------------------------------------------------------------ */
@@ -586,8 +599,10 @@ static bool frames_create(void)
 /* initialisation                                                     */
 /* ------------------------------------------------------------------ */
 
- bool graphic_backend_init(int width, int height, const char *title,
-                           uint32_t flags)
+ bool graphic_backend_init(int         width,
+                           int         height,
+                           const char *title,
+                           uint32_t    flags)
  {
     backend.vsync      = (flags & GRAPHIC_WINDOW_VSYNC)      != 0;
     backend.validation = (flags & GRAPHIC_WINDOW_VALIDATION) != 0;
@@ -608,6 +623,9 @@ static bool frames_create(void)
         return false;
 
     if (!swapchain_create())
+        return false;
+
+    if (!graphic_pipeline_init(backend.device, backend.swapchain_format))
         return false;
 
     if (!frames_create())
@@ -675,6 +693,13 @@ bool graphic_backend_frame_begin(void)
 {
     struct graphic_frame *frame = &backend.frames[backend.frame_index];
     
+    if (backend.swapchain_dirty) {
+        if (!graphic_backend_swapchain_recreate())
+            return false;
+        backend.swapchain_dirty = false;
+    }
+
+
     vkWaitForFences(backend.device,
                     1,
                     &frame->in_flight,
@@ -689,6 +714,11 @@ bool graphic_backend_frame_begin(void)
                                    VK_NULL_HANDLE,
                                    &backend.image_index);
 
+    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+        backend.swapchain_dirty = true;
+        return false;
+    }
+
     if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
         return false;
 
@@ -702,9 +732,120 @@ bool graphic_backend_frame_begin(void)
     vkResetCommandBuffer(frame->command_buffer, 0);
     vkBeginCommandBuffer(frame->command_buffer, &begin);
 
-    backend.frame_active = true;
+    backend.frame_active    = true;
+    backend.swapchain_ready = false;
 
     return true;
+}
+
+/* ------------------------------------------------------------------ */
+/* recording                                                          */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Opens the rendering block the frame draws into. The window is target
+ * 0, and so far the only target there is.
+ */
+static void rendering_begin(VkCommandBuffer   command_buffer,
+                            uint32_t          target_id,
+                            bool              clear,
+                            VkClearColorValue clear_color)
+{
+    VkExtent2D  extent;
+    VkImageView color_view;
+
+    if (target_id == 0) {
+        extent = backend.swapchain_extent;
+        color_view = backend.swapchain_image_views[backend.image_index];
+
+        /*
+         * UNDEFINED as the old layout says the previous contents
+         * are not needed, which lets a tiled GPU skip loading the
+         * tile. Only correct because the first block always
+         * clears.
+         */
+        if (!backend.swapchain_ready) {
+            /*
+             * The source stage must be the one the acquire
+             * semaphore is waited on at. With NONE the transition
+             * is not ordered after that wait, and may write the
+             * image while the presentation engine still reads
+             * it; only synchronization validation notices.
+             */
+            image_barrier(command_buffer,
+                          backend.swapchain_images[backend.image_index],
+                          VK_IMAGE_ASPECT_COLOR_BIT,
+                          VK_IMAGE_LAYOUT_UNDEFINED,
+                          VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                          VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                          VK_ACCESS_2_NONE,
+                          VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                          VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+
+            backend.swapchain_ready = true;
+        }
+    } else {
+        return; /* only the window can be drawn into so far */
+    }
+
+    VkRenderingAttachmentInfo color = { 0 };
+    color.sType            = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    color.imageView        = color_view;
+    color.imageLayout      = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    color.loadOp           = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR :
+                                     VK_ATTACHMENT_LOAD_OP_LOAD;
+    color.clearValue.color = clear_color;
+    color.storeOp          = VK_ATTACHMENT_STORE_OP_STORE;
+
+    VkRenderingInfo rendering = { 0 };
+    rendering.sType                = VK_STRUCTURE_TYPE_RENDERING_INFO;
+    rendering.renderArea.extent    = extent;
+    rendering.layerCount           = 1;
+    rendering.colorAttachmentCount = 1;
+    rendering.pColorAttachments    = &color;
+
+    vkCmdBeginRendering(command_buffer, &rendering);
+
+    /*
+     * Negative height flips Vulkan's Y down NDC back to Y up, which
+     * keeps graphic_math.c free of any flip and makes counter
+     * clockwise winding the front face. Render targets use the same
+     * convention, so their contents are not stored upside down.
+     */
+    VkViewport viewport;
+    viewport.x        = 0.0f;
+    viewport.y        = (float)extent.height;
+    viewport.width    = (float)extent.width;
+    viewport.height   = -(float)extent.height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+
+    VkRect2D scissor;
+    scissor.offset.x = 0;
+    scissor.offset.y = 0;
+    scissor.extent   = extent;
+
+    vkCmdSetViewport(command_buffer, 0, 1, &viewport);
+    vkCmdSetScissor(command_buffer, 0, 1, &scissor);
+}
+
+static void rendering_end(VkCommandBuffer command_buffer,
+                          uint32_t        target_id)
+{
+    vkCmdEndRendering(command_buffer);
+}
+
+/*
+ * TODO: temp
+ */
+static void triangle_draw(VkCommandBuffer       command_buffer,
+                          struct graphic_frame *frame)
+{
+    vkCmdBindPipeline(command_buffer,
+                      VK_PIPELINE_BIND_POINT_GRAPHICS,
+                      graphic_pipeline_get());
+
+    vkCmdDraw(command_buffer, 3, 1, 0, 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -713,50 +854,32 @@ bool graphic_backend_frame_begin(void)
 
 void graphic_backend_frame_end(void)
 {
-    struct graphic_frame *frame = &backend.frames[backend.frame_index];
-    VkCommandBuffer command_buffer = frame->command_buffer;
+    struct graphic_frame *frame          = &backend.frames[backend.frame_index];
+    VkCommandBuffer       command_buffer = frame->command_buffer;
 
     if (!backend.frame_active)
         return;
 
-    /*
-     * For now the whole frame is one clear, done as a transfer: the
-     * image moves to a layout a transfer may write, is cleared, and
-     * moves on to the layout the presentation engine reads.
-     */
-    image_barrier(command_buffer,
-                  backend.swapchain_images[backend.image_index], /* image */
-                  VK_IMAGE_ASPECT_COLOR_BIT,                    /* aspect */
-                  VK_IMAGE_LAYOUT_UNDEFINED,                /* old_layout */  
-                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,     /* new_layout */
-                  VK_PIPELINE_STAGE_2_CLEAR_BIT,          /* source_stage */
-                  VK_ACCESS_2_NONE,                      /* source_access */
-                  VK_PIPELINE_STAGE_2_CLEAR_BIT,     /* destination_stage */
-                  VK_ACCESS_2_TRANSFER_WRITE_BIT);  /* destination_access */
-
-    VkImageSubresourceRange range = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-
-    vkCmdClearColorImage(command_buffer,
-                         backend.swapchain_images[backend.image_index],
-                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                         &backend.clear_color, 1, &range);
+    rendering_begin(command_buffer, 0, true, backend.clear_color);
+    triangle_draw(command_buffer, frame); // TODO: temp. for test
+    rendering_end(command_buffer, 0);
 
     image_barrier(command_buffer,
-                  backend.swapchain_images[backend.image_index], /* image */
-                  VK_IMAGE_ASPECT_COLOR_BIT,                    /* aspect */
-                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,     /* old_layout */
-                  VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,          /* new_layout */
-                  VK_PIPELINE_STAGE_2_CLEAR_BIT,          /* source_stage */
-                  VK_ACCESS_2_TRANSFER_WRITE_BIT,        /* source_access */
-                  VK_PIPELINE_STAGE_2_NONE,          /* destination_stage */
-                  VK_ACCESS_2_NONE);                /* destination_access */
+                  backend.swapchain_images[backend.image_index],
+                  VK_IMAGE_ASPECT_COLOR_BIT,
+                  VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                  VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                  VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                  VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                  VK_PIPELINE_STAGE_2_NONE,
+                  VK_ACCESS_2_NONE);
 
     vkEndCommandBuffer(command_buffer);
 
     VkSemaphoreSubmitInfo wait = { 0 };
     wait.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
     wait.semaphore = frame->image_available;
-    wait.stageMask = VK_PIPELINE_STAGE_2_CLEAR_BIT;
+    wait.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
 
     VkSemaphoreSubmitInfo signal = { 0 };
     signal.sType     = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
@@ -786,7 +909,12 @@ void graphic_backend_frame_end(void)
     present.pSwapchains        = &backend.swapchain;
     present.pImageIndices      = &backend.image_index;
 
-    vkQueuePresentKHR(backend.present_queue, &present);
+    VkResult result;
+    result = vkQueuePresentKHR(backend.present_queue, &present);
+
+    if (result == VK_ERROR_OUT_OF_DATE_KHR ||
+        result == VK_SUBOPTIMAL_KHR)
+        backend.swapchain_dirty = true;
 
     backend.frame_active = false;
     backend.frame_index  = (backend.frame_index + 1) % GRAPHIC_FRAMES_IN_FLIGHT;
@@ -800,6 +928,8 @@ void graphic_backend_shutdown(void)
 {
     if (backend.device != VK_NULL_HANDLE)
         vkDeviceWaitIdle(backend.device);
+
+    graphic_pipeline_shutdown();
 
     for (uint32_t i = 0; i < GRAPHIC_FRAMES_IN_FLIGHT; i++) {
         struct graphic_frame *frame = &backend.frames[i];

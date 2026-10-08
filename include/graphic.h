@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "graphic_color.h"
+#include "graphic_camera.h"
 
 /*
  * Public API of the graphic library: an immediate mode drawing layer
@@ -41,9 +42,38 @@ enum graphic_window_flag {
 /* ------------------------------------------------------------------ */
 
 void graphic_window_flags_set(uint32_t flags); /* before graphic_window() */
-bool graphic_window(int width, int height, const char *title);
+
+bool graphic_window(int         width,
+                    int         height,
+                    const char *title);
+
 void graphic_window_close(void);
+
 bool graphic_window_should_close(void);
+
+bool graphic_window_is_fullscreen(void);
+bool graphic_window_is_minimized(void);
+bool graphic_window_is_resized(void);
+
+void graphic_window_fullscreen_toggle(void);
+
+void graphic_window_title_set(const char *title);
+
+/* ------------------------------------------------------------------ */
+/* screen and monitors               (src/graphic_platform_glfw.c)    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Screen size is in window coordinates, render size is in pixels.
+ * They differ on a HiDPI display; the render size is what the
+ * swapchain and the projection matrix use.
+ */
+int graphic_screen_width_get(void);
+int graphic_screen_height_get(void);
+int graphic_render_width_get(void);
+int graphic_render_height_get(void);
+
+int graphic_monitor_current_get(void);
 
 /* ------------------------------------------------------------------ */
 /* events, cursor and time           (src/graphic_platform_glfw.c)    */
@@ -52,6 +82,8 @@ bool graphic_window_should_close(void);
 void graphic_events_poll(void);
 
 double graphic_time_get(void);
+
+void graphic_time_wait(double seconds);
 
 /* ------------------------------------------------------------------ */
 /* frame lifecycle                   (src/graphic_core.c)             */
