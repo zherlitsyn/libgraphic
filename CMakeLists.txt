@@ -137,7 +137,8 @@ add_library(graphic STATIC
     src/graphic_core.c
     src/graphic_backend.c
     src/graphic_pipeline.c
-    src/graphic_platform_glfw.c)
+    src/graphic_platform_glfw.c
+    src/graphic_alloc.c)
 
 add_dependencies(graphic graphic_shaders)
 

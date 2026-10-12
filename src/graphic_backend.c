@@ -8,6 +8,7 @@
 #include "graphic_backend.h"
 #include "graphic_platform.h"
 #include "graphic_pipeline.h"
+#include "graphic_alloc.h"
 
 #define GRAPHIC_MAX_SWAPCHAIN_IMAGES    8
 #define GRAPHIC_INVALID_QUEUE_FAMILY    UINT32_MAX
@@ -17,29 +18,33 @@
  * GPU is still reading the previous frame must be duplicated here.
  */
 struct graphic_frame {
-    VkCommandBuffer command_buffer;
-    VkSemaphore image_available;
-    VkFence in_flight;
+    VkCommandBuffer       command_buffer;
+    VkSemaphore           image_available;
+    VkFence               in_flight;
+
+    struct graphic_buffer vertex_buffer;
+    uint32_t              vertex_capacity;
 };
 
 struct graphic_backend {
-    VkInstance instance;
+    VkInstance               instance;
     VkDebugUtilsMessengerEXT debug_messenger;
-    VkSurfaceKHR surface;
+    VkSurfaceKHR             surface;
 
-    VkPhysicalDevice physical_device;
-    uint32_t graphics_family;
-    uint32_t present_family;
+    VkPhysicalDevice         physical_device;
+    uint32_t                 graphics_family;
+    uint32_t                 present_family;
 
-    VkDevice device;
-    VkQueue graphics_queue;
-    VkQueue present_queue;
+    VkDevice                 device;
+    VkQueue                  graphics_queue;
+    VkQueue                  present_queue;
 
-    VkSwapchainKHR swapchain;
-    VkFormat swapchain_format;
-    VkExtent2D swapchain_extent;
-    uint32_t swapchain_image_count;
-    VkImage swapchain_images[GRAPHIC_MAX_SWAPCHAIN_IMAGES];
+    VkSwapchainKHR           swapchain;
+    VkFormat                 swapchain_format;
+    VkExtent2D               swapchain_extent;
+    uint32_t                 swapchain_image_count;
+
+    VkImage     swapchain_images[GRAPHIC_MAX_SWAPCHAIN_IMAGES];
     VkImageView swapchain_image_views[GRAPHIC_MAX_SWAPCHAIN_IMAGES];
 
     /*
@@ -53,15 +58,15 @@ struct graphic_backend {
     VkCommandPool command_pool;
     struct graphic_frame frames[GRAPHIC_FRAMES_IN_FLIGHT];
 
-    uint32_t frame_index;
-    uint32_t image_index;
+    uint32_t          frame_index;
+    uint32_t          image_index;
     VkClearColorValue clear_color;
-    bool frame_active;
-    bool swapchain_dirty;
-    bool swapchain_ready; /* window image already transitioned */
+    bool              frame_active;
+    bool              swapchain_dirty;
+    bool              swapchain_ready; /* window image already transitioned */
 
-    bool vsync;
-    bool validation;
+    bool              vsync;
+    bool              validation;
 };
 
 static struct graphic_backend backend;
@@ -590,6 +595,15 @@ static bool frames_create(void)
                           NULL,
                           &frame->in_flight) != VK_SUCCESS)
             return false;
+
+        if (!graphic_buffer_create(&frame->vertex_buffer,
+                                   (VkDeviceSize)GRAPHIC_BATCH_VERTICES_DEFAULT *
+                                   sizeof(struct graphic_vertex),
+                                   VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                                   true))
+            return false;
+
+        frame->vertex_capacity = GRAPHIC_BATCH_VERTICES_DEFAULT;
     }
 
     return true;
@@ -620,6 +634,12 @@ static bool frames_create(void)
         return false;
 
     if (!device_create())
+        return false;
+
+    if (!graphic_alloc_init(backend.instance,
+                            backend.physical_device,
+                            backend.device,
+                            VK_API_VERSION_1_3))
         return false;
 
     if (!swapchain_create())
@@ -841,9 +861,28 @@ static void rendering_end(VkCommandBuffer command_buffer,
 static void triangle_draw(VkCommandBuffer       command_buffer,
                           struct graphic_frame *frame)
 {
+    static const struct graphic_vertex vertices[3] = {
+        { {  0.0f,  0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f },
+          { 230,  60,  60, 255 }, { 0.0f, 0.0f } },
+        { { -0.5f, -0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f },
+          {  60, 200,  90, 255 }, { 0.0f, 0.0f } },
+        { {  0.5f, -0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f },
+          {  60, 110, 230, 255 }, { 0.0f, 0.0f } },
+    };
+
+    /* host visible and mapped: a plain copy is the whole upload */
+    memcpy(frame->vertex_buffer.mapped, vertices, sizeof(vertices));
+
     vkCmdBindPipeline(command_buffer,
                       VK_PIPELINE_BIND_POINT_GRAPHICS,
                       graphic_pipeline_get());
+
+    VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(command_buffer,
+                           0,
+                           1,
+                           &frame->vertex_buffer.handle,
+                           &offset);
 
     vkCmdDraw(command_buffer, 3, 1, 0, 0);
 }
@@ -934,6 +973,8 @@ void graphic_backend_shutdown(void)
     for (uint32_t i = 0; i < GRAPHIC_FRAMES_IN_FLIGHT; i++) {
         struct graphic_frame *frame = &backend.frames[i];
 
+        graphic_buffer_destroy(&frame->vertex_buffer);
+
         if (frame->image_available != VK_NULL_HANDLE)
             vkDestroySemaphore(backend.device,
                                frame->image_available,
@@ -951,6 +992,7 @@ void graphic_backend_shutdown(void)
                              NULL);
 
     swapchain_destroy();
+    graphic_alloc_shutdown();
 
     if (backend.device != VK_NULL_HANDLE)
         vkDestroyDevice(backend.device, NULL);

@@ -1,26 +1,16 @@
 #version 450
 
-/*
- * A triangle with nowhere else to come from yet: the positions and
- * the colours live in the shader, picked out by gl_VertexIndex.
- */
-const vec2 positions[3] = vec2[](
-    vec2( 0.0,  0.5),
-    vec2(-0.5, -0.5),
-    vec2( 0.5, -0.5)
-);
-
-const vec4 colors[3] = vec4[](
-    vec4(0.90, 0.24, 0.24, 1.0),
-    vec4(0.24, 0.78, 0.35, 1.0),
-    vec4(0.24, 0.43, 0.90, 1.0)
-);
+layout(location = 0) in vec3 in_position;
+layout(location = 1) in vec3 in_normal;
+layout(location = 2) in vec4 in_color;
+layout(location = 3) in vec2 in_texcoord;
 
 layout(location = 0) out vec4 out_color;
+layout(location = 1) out vec2 out_texcoord;
 
 void main()
 {
-    out_color = colors[gl_VertexIndex];
-
-    gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
+    out_color    = in_color;
+    out_texcoord = in_texcoord;
+    gl_Position  = vec4(in_position, 1.0);
 }

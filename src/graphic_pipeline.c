@@ -1,3 +1,4 @@
+#include <stddef.h>
 #include <stdio.h>
 #include <vulkan/vulkan.h>
 
@@ -65,8 +66,35 @@ static bool pipeline_create_full(VkPrimitiveTopology topology,
     stages[1].module = fragment_module;
     stages[1].pName  = "main";
 
+    VkVertexInputBindingDescription binding[1] = { { 0 } };
+    binding[0].binding   = 0;
+    binding[0].stride    = sizeof(struct graphic_vertex);
+    binding[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    VkVertexInputAttributeDescription attributes[4] = { { 0 } };
+    attributes[0].location = 0;
+    attributes[0].format   = VK_FORMAT_R32G32B32_SFLOAT;
+    attributes[0].offset   = offsetof(struct graphic_vertex, position);
+
+    attributes[1].location = 1;
+    attributes[1].format   = VK_FORMAT_R32G32B32_SFLOAT;
+    attributes[1].offset   = offsetof(struct graphic_vertex, normal);
+
+    /* UNORM: the eight bit channels arrive in the shader as [0, 1] */
+    attributes[2].location = 2;
+    attributes[2].format   = VK_FORMAT_R8G8B8A8_UNORM;
+    attributes[2].offset   = offsetof(struct graphic_vertex, color);
+
+    attributes[3].location = 3;
+    attributes[3].format   = VK_FORMAT_R32G32_SFLOAT;
+    attributes[3].offset   = offsetof(struct graphic_vertex, texcoord);
+
     VkPipelineVertexInputStateCreateInfo vertex_input = { 0 };
     vertex_input.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vertex_input.vertexBindingDescriptionCount   = 1;
+    vertex_input.pVertexBindingDescriptions      = binding;
+    vertex_input.vertexAttributeDescriptionCount = 4;
+    vertex_input.pVertexAttributeDescriptions    = attributes;
 
     VkPipelineInputAssemblyStateCreateInfo input_assembly = { 0 };
     input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
