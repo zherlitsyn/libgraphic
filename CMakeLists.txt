@@ -3,16 +3,20 @@ cmake_minimum_required(VERSION 3.16)
 project(graphic
     VERSION 0.1.0
     DESCRIPTION "Immediate mode graphics API over Vulkan"
-    LANGUAGES C)
+    LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Debug CACHE STRING "" FORCE)
 endif()
 
 option(GRAPHIC_BUILD_EXAMPLES "Build the examples" ON)
+
+set(THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
 
 # --------------------------------------------------------------------
 # dependencies
@@ -37,6 +41,18 @@ if(NOT glfw3_FOUND)
             "it with -Dglfw3_DIR=<path>")
     endif()
     add_library(glfw ALIAS PkgConfig::GLFW)
+endif()
+
+# VMA is a single header; the vendored copy wins
+if(EXISTS "${THIRD_PARTY_DIR}/vk_mem_alloc.h")
+    set(VMA_INCLUDE_DIR "${THIRD_PARTY_DIR}")
+else()
+    find_path(VMA_INCLUDE_DIR vk_mem_alloc.h)
+    if(NOT VMA_INCLUDE_DIR)
+        message(FATAL_ERROR
+            "vk_mem_alloc.h not found. Put the single header in "
+            "third_party/ or pass -DVMA_INCLUDE_DIR=<path>")
+    endif()
 endif()
 
 # --------------------------------------------------------------------
@@ -138,7 +154,7 @@ add_library(graphic STATIC
     src/graphic_backend.c
     src/graphic_pipeline.c
     src/graphic_platform_glfw.c
-    src/graphic_alloc.c)
+    src/graphic_alloc.cpp)
 
 add_dependencies(graphic graphic_shaders)
 
@@ -147,7 +163,9 @@ target_include_directories(graphic
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
-        "${GENERATED_DIR}")
+        "${GENERATED_DIR}"
+        "${THIRD_PARTY_DIR}"
+        "${VMA_INCLUDE_DIR}")
 
 target_link_libraries(graphic
     PUBLIC Vulkan::Vulkan
@@ -156,6 +174,10 @@ target_link_libraries(graphic
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(graphic PRIVATE
         $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Wno-unused-parameter>)
+
+    # VMA is third party and noisy under our warning set
+    set_source_files_properties(src/graphic_alloc.cpp
+        PROPERTIES COMPILE_OPTIONS "-w")
 endif()
 
 # --------------------------------------------------------------------

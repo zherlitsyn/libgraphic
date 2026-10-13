@@ -5,17 +5,21 @@
 
 #include <vulkan/vulkan.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /*
- * The memory layer's interface. For now a hand written allocator sits
- * behind it, one vkAllocateMemory per buffer; the next lecture puts the
- * Vulkan Memory Allocator there instead without changing a caller.
+ * Thin C facade over the Vulkan Memory Allocator. graphic_alloc.cpp is the
+ * only C++ translation unit in the project; replacing it with a hand
+ * written suballocator would not change a single caller.
  */
 
 struct graphic_buffer {
     VkBuffer     handle;
     void        *mapped;        /* NULL unless host visible */
     VkDeviceSize size;
-    void        *allocation;    /* VkDeviceMemory, for now */
+    void        *allocation;    /* VmaAllocation */
 };
 
 bool graphic_alloc_init(VkInstance       instance,
@@ -31,5 +35,9 @@ bool graphic_buffer_create(struct graphic_buffer *buffer,
                            bool                   host_visible);
 
 void graphic_buffer_destroy(struct graphic_buffer *buffer);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* GRAPHIC_ALLOC_H */
