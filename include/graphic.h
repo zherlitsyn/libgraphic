@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "graphic_linalg.h"
 #include "graphic_color.h"
 #include "graphic_camera.h"
 

@@ -150,11 +150,17 @@ endif()
 # --------------------------------------------------------------------
 
 add_library(graphic STATIC
+    src/graphic_linalg.c
     src/graphic_core.c
     src/graphic_backend.c
     src/graphic_pipeline.c
     src/graphic_platform_glfw.c
     src/graphic_alloc.cpp)
+
+find_library(MATH_LIBRARY m)
+if(MATH_LIBRARY)
+    target_link_libraries(graphic PUBLIC ${MATH_LIBRARY})
+endif()
 
 add_dependencies(graphic graphic_shaders)
 

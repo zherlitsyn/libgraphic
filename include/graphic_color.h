@@ -4,6 +4,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "graphic_linalg.h"
+
 /*
  * Colours and pixel formats.
  *

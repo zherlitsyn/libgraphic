@@ -1,6 +1,8 @@
 #ifndef GRAPHIC_CAMERA_H
 #define GRAPHIC_CAMERA_H
 
+#include "graphic_linalg.h"
+
 /*
  * Cameras, and the projection maths that goes with them.
  *

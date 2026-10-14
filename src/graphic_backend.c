@@ -862,16 +862,32 @@ static void triangle_draw(VkCommandBuffer       command_buffer,
                           struct graphic_frame *frame)
 {
     static const struct graphic_vertex vertices[3] = {
-        { {  0.0f,  0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f },
-          { 230,  60,  60, 255 }, { 0.0f, 0.0f } },
-        { { -0.5f, -0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f },
-          {  60, 200,  90, 255 }, { 0.0f, 0.0f } },
-        { {  0.5f, -0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f },
-          {  60, 110, 230, 255 }, { 0.0f, 0.0f } },
+        { { 480.0f, 100.0f, 0.0f }, { 0.0f, 0.0f, 1.0f },
+          { 230,  60,  60, 255 },   { 0.0f, 0.0f } },
+        { { 280.0f, 440.0f, 0.0f }, { 0.0f, 0.0f, 1.0f },
+          {  60, 200,  90, 255 },   { 0.0f, 0.0f } },
+        { { 680.0f, 440.0f, 0.0f }, { 0.0f, 0.0f, 1.0f },
+          {  60, 110, 230, 255 },   { 0.0f, 0.0f } },
     };
 
+    /* pixels, origin at the top left, whatever the window size */
+    mat4_t projection;
+    projection = mat4_ortho_get(0.0f,
+                                (float)backend.swapchain_extent.width,
+                                (float)backend.swapchain_extent.height,
+                                0.0f,
+                               -1.0f,
+                                1.0f);
+
+    struct graphic_push_constants constants;
+    memcpy(constants.view_projection,
+           projection.m,
+           sizeof(constants.view_projection));
+
     /* host visible and mapped: a plain copy is the whole upload */
-    memcpy(frame->vertex_buffer.mapped, vertices, sizeof(vertices));
+    memcpy(frame->vertex_buffer.mapped,
+           vertices,
+           sizeof(vertices));
 
     vkCmdBindPipeline(command_buffer,
                       VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -883,6 +899,13 @@ static void triangle_draw(VkCommandBuffer       command_buffer,
                            1,
                            &frame->vertex_buffer.handle,
                            &offset);
+
+    vkCmdPushConstants(command_buffer,
+                       graphic_pipeline_layout_get(),
+                       VK_SHADER_STAGE_VERTEX_BIT,
+                       0,
+                       sizeof(constants),
+                       &constants);
 
     vkCmdDraw(command_buffer, 3, 1, 0, 0);
 }

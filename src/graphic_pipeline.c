@@ -39,8 +39,15 @@ static VkShaderModule shader_module_create(const uint32_t *code,
 
 static bool layout_create(void)
 {
+    VkPushConstantRange range = { 0 };
+    range.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    range.offset     = 0;
+    range.size       = sizeof(struct graphic_push_constants);
+
     VkPipelineLayoutCreateInfo info = { 0 };
     info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    info.pushConstantRangeCount = 1;
+    info.pPushConstantRanges    = &range;
 
     return vkCreatePipelineLayout(pipeline_state.device,
                                   &info,
@@ -227,6 +234,11 @@ bool graphic_pipeline_init(VkDevice device,
 VkPipeline graphic_pipeline_get(void)
 {
     return pipeline_state.pipeline;
+}
+
+VkPipelineLayout graphic_pipeline_layout_get(void)
+{
+    return pipeline_state.layout;
 }
 
 void graphic_pipeline_shutdown(void)
