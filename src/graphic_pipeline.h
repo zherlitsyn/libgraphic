@@ -19,7 +19,10 @@ bool graphic_pipeline_init(VkDevice device,
 
 void graphic_pipeline_shutdown(void);
 
-VkPipeline graphic_pipeline_get(void);
+/*
+ * mode is enum graphic_draw_mode. Quads share the triangle pipeline.
+ */
+VkPipeline graphic_pipeline_get(int mode);
 
 VkPipelineLayout graphic_pipeline_layout_get(void);
 

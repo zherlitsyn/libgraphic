@@ -150,6 +150,7 @@ endif()
 # --------------------------------------------------------------------
 
 add_library(graphic STATIC
+    src/graphic.c
     src/graphic_linalg.c
     src/graphic_core.c
     src/graphic_backend.c
@@ -190,9 +191,8 @@ endif()
 # examples
 # --------------------------------------------------------------------
 
-
 if(GRAPHIC_BUILD_EXAMPLES)
-    foreach(example window)
+    foreach(example window sandbox)
         add_executable(${example} examples/${example}.c)
         target_link_libraries(${example} PRIVATE graphic)
         set_target_properties(${example} PROPERTIES

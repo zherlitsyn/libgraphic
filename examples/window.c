@@ -34,7 +34,7 @@ int main(void)
 
         graphic_drawing_begin();
 
-        graphic_color_t background = { 88, 88, 88, 255 };
+        graphic_color_t background = { 64, 64, 64, 255 };
         graphic_background_clear(background);
 
         graphic_drawing_end();

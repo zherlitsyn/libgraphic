@@ -26,6 +26,42 @@ struct graphic_core_state {
 
 static struct graphic_core_state core;
 
+/*
+ * The size everything projects against. A minimised window reports
+ * zero, which would put a division by zero into the aspect ratio, so
+ * it is clamped to one.
+ */
+static void draw_size_get(uint32_t *width, uint32_t *height)
+{
+    graphic_platform_framebuffer_size_get(width, height);
+
+    if (*width == 0)
+        *width = 1;
+
+    if (*height == 0)
+        *height = 1;
+}
+
+static void projection_2d_set(void)
+{
+    uint32_t width;
+    uint32_t height;
+    draw_size_get(&width, &height);
+
+    /*
+     * Top left origin: bottom and top are swapped on purpose, so
+     * that Y grows downwards in screen space as users expect.
+     */
+    graphic_batch_projection_set(mat4_ortho_get(0.0f,
+                                                (float)width,
+                                                (float)height,
+                                                0.0f,
+                                               -1.0f,
+                                                1.0f));
+
+    graphic_batch_view_set(mat4_identity_get());
+}
+
 void graphic_window_flags_set(uint32_t flags)
 {
     core.flags = flags;
@@ -94,7 +130,18 @@ void graphic_drawing_begin(void)
         core.fps_frames = 0;
     }
 
-    core.frame_valid = graphic_backend_frame_begin();
+    struct graphic_vertex *vertices = NULL;
+    uint32_t capacity = 0;
+    core.frame_valid = graphic_backend_frame_begin(&vertices, &capacity);
+
+    /*
+     * The batch is started even for a skipped frame: with a null
+     * pointer it silently drops vertices while still counting how
+     * many were wanted, which is what sizes the buffer next frame.
+     */
+    graphic_batch_frame_begin(vertices, capacity);
+
+    projection_2d_set();
 }
 
 /*
@@ -107,10 +154,14 @@ void graphic_background_clear(graphic_color_t color)
 }
 
 /*
- * Submits and presents the frame, if one was begun.
+ * Records the draw calls into the command buffer, submits and
+ * presents. On a skipped frame the backend ignores the recording, so
+ * no branch is needed around it.
  */
 void graphic_screen_buffer_swap(void)
 {
+    graphic_batch_frame_end();
+
     if (core.frame_valid) {
         graphic_backend_frame_end();
         core.frame_valid = false;

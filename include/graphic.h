@@ -20,6 +20,17 @@
 /* enumerations                                                       */
 /* ------------------------------------------------------------------ */
 
+enum graphic_draw_mode {
+    GRAPHIC_DRAW_LINES = 1,
+    GRAPHIC_DRAW_TRIANGLES,
+    GRAPHIC_DRAW_QUADS,     /* expanded to triangles by index */
+};
+
+enum graphic_matrix_mode {
+    GRAPHIC_MATRIX_MODELVIEW = 0,
+    GRAPHIC_MATRIX_PROJECTION,
+};
+
 enum graphic_window_flag {
     GRAPHIC_WINDOW_RESIZABLE         = 1 << 0,
     GRAPHIC_WINDOW_VSYNC             = 1 << 1,
@@ -100,5 +111,56 @@ void graphic_drawing_end(void);
  */
 void graphic_screen_buffer_swap(void); /* record, submit, present */
 void graphic_background_clear(graphic_color_t color);
+
+/* ------------------------------------------------------------------ */
+/* immediate mode geometry           (src/graphic.c)                  */
+/* ------------------------------------------------------------------ */
+
+void graphic_matrix_mode(int mode); /* enum graphic_matrix_mode */
+void graphic_matrix_push(void);
+void graphic_matrix_pop(void);
+void graphic_matrix_identity(void);
+void graphic_matrix_load(mat4_t matrix);
+void graphic_matrix_multiply(mat4_t matrix);
+
+void graphic_translatef(float x,
+                        float y,
+                        float z);
+
+void graphic_rotatef(float angle, /* degrees */
+                     float x,
+                     float y,
+                     float z); 
+
+void graphic_scalef(float x,
+                    float y,
+                    float z);
+
+void graphic_begin(int mode); /* enum graphic_draw_mode */
+void graphic_end(void);
+
+void graphic_color4ub(uint8_t r,
+                      uint8_t g,
+                      uint8_t b,
+                      uint8_t a);
+
+void graphic_color4f(float r,
+                     float g,
+                     float b,
+                     float a);
+
+void graphic_normal3f(float x,
+                      float y,
+                      float z);
+
+void graphic_texcoord2f(float u,
+                        float v);
+
+void graphic_vertex3f(float x,
+                      float y,
+                      float z);
+
+void graphic_vertex2f(float x,
+                      float y);
 
 #endif /* GRAPHIC_H */

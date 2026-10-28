@@ -58,11 +58,15 @@ struct graphic_backend {
     VkCommandPool command_pool;
     struct graphic_frame frames[GRAPHIC_FRAMES_IN_FLIGHT];
 
+    struct graphic_buffer quad_index_buffer;
+    uint32_t              quad_index_capacity;
+
     uint32_t          frame_index;
     uint32_t          image_index;
     VkClearColorValue clear_color;
     bool              frame_active;
     bool              swapchain_dirty;
+    VkPipeline        pipeline_bound;
     bool              swapchain_ready; /* window image already transitioned */
 
     bool              vsync;
@@ -550,6 +554,37 @@ bool graphic_backend_swapchain_recreate(void)
 /* per frame resources                                                 */
 /* ------------------------------------------------------------------ */
 
+static bool quad_index_buffer_create(uint32_t vertex_capacity)
+{    
+    graphic_buffer_destroy(&backend.quad_index_buffer);
+
+    uint32_t quad_count  = vertex_capacity / 4;
+    uint32_t index_count = quad_count * 6;
+
+    if (!graphic_buffer_create(&backend.quad_index_buffer,
+                               (VkDeviceSize)index_count * sizeof(uint32_t),
+                               VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                               true))
+        return false;
+
+    uint32_t *indices = backend.quad_index_buffer.mapped;
+
+    for (uint32_t i = 0; i < quad_count; i++) {
+        uint32_t base = i * 4;
+
+        indices[i * 6 + 0] = base + 0;
+        indices[i * 6 + 1] = base + 1;
+        indices[i * 6 + 2] = base + 2;
+        indices[i * 6 + 3] = base + 0;
+        indices[i * 6 + 4] = base + 2;
+        indices[i * 6 + 5] = base + 3;
+    }
+
+    backend.quad_index_capacity = vertex_capacity;
+
+    return true;
+}
+
 static bool frames_create(void)
 {
     VkCommandPoolCreateInfo pool = { 0 };
@@ -605,6 +640,9 @@ static bool frames_create(void)
 
         frame->vertex_capacity = GRAPHIC_BATCH_VERTICES_DEFAULT;
     }
+
+    if (!quad_index_buffer_create(GRAPHIC_BATCH_VERTICES_DEFAULT))
+        return false;
 
     return true;
 }
@@ -701,6 +739,42 @@ static void image_barrier(VkCommandBuffer       command_buffer,
 /* frame begin                                                         */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Called right after the fence for this frame was signalled, so the
+ * GPU is provably done with the old buffer and it can be destroyed
+ * without any extra synchronisation.
+ */
+static bool frame_vertex_buffer_fit(struct graphic_frame *frame,
+                                    uint32_t              vertices_required)
+{
+    uint32_t capacity = frame->vertex_capacity;
+
+    if (vertices_required <= capacity)
+        return true;
+
+    while (capacity < vertices_required)
+        capacity *= 2;
+
+    graphic_buffer_destroy(&frame->vertex_buffer);
+
+    if (!graphic_buffer_create(&frame->vertex_buffer,
+                        (VkDeviceSize)capacity * sizeof(struct graphic_vertex),
+                        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, true)) {
+        frame->vertex_capacity = 0;
+        return false;
+    }
+
+    frame->vertex_capacity = capacity;
+
+    if (capacity > backend.quad_index_capacity) {
+        vkDeviceWaitIdle(backend.device);
+        if (!quad_index_buffer_create(capacity))
+            return false;
+    }
+
+    return true;
+}
+
 void graphic_backend_clear_color_set(graphic_color_t color)
 {
     backend.clear_color.float32[0] = (float)color.r / 255.0f;
@@ -709,22 +783,28 @@ void graphic_backend_clear_color_set(graphic_color_t color)
     backend.clear_color.float32[3] = (float)color.a / 255.0f;
 }
 
-bool graphic_backend_frame_begin(void)
+bool graphic_backend_frame_begin(struct graphic_vertex **vertices,
+                                 uint32_t               *capacity)
 {
     struct graphic_frame *frame = &backend.frames[backend.frame_index];
     
+    *vertices = NULL;
+    *capacity = 0;
+
     if (backend.swapchain_dirty) {
         if (!graphic_backend_swapchain_recreate())
             return false;
         backend.swapchain_dirty = false;
     }
 
-
     vkWaitForFences(backend.device,
                     1,
                     &frame->in_flight,
                     VK_TRUE,
                     UINT64_MAX);
+
+    if (!frame_vertex_buffer_fit(frame, graphic_batch_capacity_required_get()))
+        return false;
 
     VkResult result;
     result = vkAcquireNextImageKHR(backend.device,
@@ -754,6 +834,10 @@ bool graphic_backend_frame_begin(void)
 
     backend.frame_active    = true;
     backend.swapchain_ready = false;
+    backend.pipeline_bound  = VK_NULL_HANDLE;
+
+    *vertices = frame->vertex_buffer.mapped;
+    *capacity = frame->vertex_capacity;
 
     return true;
 }
@@ -847,6 +931,9 @@ static void rendering_begin(VkCommandBuffer   command_buffer,
 
     vkCmdSetViewport(command_buffer, 0, 1, &viewport);
     vkCmdSetScissor(command_buffer, 0, 1, &scissor);
+
+    /* a new block invalidates everything bound in the previous one */
+    backend.pipeline_bound = VK_NULL_HANDLE;
 }
 
 static void rendering_end(VkCommandBuffer command_buffer,
@@ -855,59 +942,91 @@ static void rendering_end(VkCommandBuffer command_buffer,
     vkCmdEndRendering(command_buffer);
 }
 
-/*
- * TODO: temp
- */
-static void triangle_draw(VkCommandBuffer       command_buffer,
-                          struct graphic_frame *frame)
+void graphic_backend_draw_calls_record(const struct graphic_draw_call *calls,
+                                       uint32_t                        count)
 {
-    static const struct graphic_vertex vertices[3] = {
-        { { 480.0f, 100.0f, 0.0f }, { 0.0f, 0.0f, 1.0f },
-          { 230,  60,  60, 255 },   { 0.0f, 0.0f } },
-        { { 280.0f, 440.0f, 0.0f }, { 0.0f, 0.0f, 1.0f },
-          {  60, 200,  90, 255 },   { 0.0f, 0.0f } },
-        { { 680.0f, 440.0f, 0.0f }, { 0.0f, 0.0f, 1.0f },
-          {  60, 110, 230, 255 },   { 0.0f, 0.0f } },
-    };
+    struct graphic_frame *frame = &backend.frames[backend.frame_index];
+    VkCommandBuffer command_buffer = frame->command_buffer;
 
-    /* pixels, origin at the top left, whatever the window size */
-    mat4_t projection;
-    projection = mat4_ortho_get(0.0f,
-                                (float)backend.swapchain_extent.width,
-                                (float)backend.swapchain_extent.height,
-                                0.0f,
-                               -1.0f,
-                                1.0f);
+    if (!backend.frame_active)
+        return;
 
-    struct graphic_push_constants constants;
-    memcpy(constants.view_projection,
-           projection.m,
-           sizeof(constants.view_projection));
+    bool rendering_active    = false;
+    bool batch_buffers_bound = false;
 
-    /* host visible and mapped: a plain copy is the whole upload */
-    memcpy(frame->vertex_buffer.mapped,
-           vertices,
-           sizeof(vertices));
+    for (uint32_t i = 0; i < count; i++) {
+        const struct graphic_draw_call *call = &calls[i];
+        
+        /*
+         * The first draw call opens the rendering block, which
+         * clears the window; everything after it draws into the
+         * same block.
+         */
+        if (!rendering_active) {
+            rendering_begin(command_buffer, 0, true, backend.clear_color);
+            rendering_active    = true;
+            batch_buffers_bound = false;
+        }
 
-    vkCmdBindPipeline(command_buffer,
-                      VK_PIPELINE_BIND_POINT_GRAPHICS,
-                      graphic_pipeline_get());
+        VkPipeline       pipeline = graphic_pipeline_get(call->mode);
+        VkPipelineLayout layout   = graphic_pipeline_layout_get();
 
-    VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(command_buffer,
-                           0,
-                           1,
-                           &frame->vertex_buffer.handle,
-                           &offset);
+        if (pipeline != backend.pipeline_bound) {
+            vkCmdBindPipeline(command_buffer,
+                              VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              pipeline);
+            backend.pipeline_bound = pipeline;
+        }
 
-    vkCmdPushConstants(command_buffer,
-                       graphic_pipeline_layout_get(),
-                       VK_SHADER_STAGE_VERTEX_BIT,
-                       0,
-                       sizeof(constants),
-                       &constants);
+        struct graphic_push_constants constants;
+        memcpy(constants.view_projection,
+               call->view_projection.m,
+               sizeof(constants.view_projection));
 
-    vkCmdDraw(command_buffer, 3, 1, 0, 0);
+        vkCmdPushConstants(command_buffer,
+                           layout,
+                           VK_SHADER_STAGE_VERTEX_BIT, 0,
+                           sizeof(constants),
+                           &constants);
+
+        if (!batch_buffers_bound) {
+            VkDeviceSize offset = 0;
+            vkCmdBindVertexBuffers(command_buffer, 0, 1,
+                                   &frame->vertex_buffer.handle,
+                                   &offset);
+
+            vkCmdBindIndexBuffer(command_buffer,
+                                 backend.quad_index_buffer.handle, 0,
+                                 VK_INDEX_TYPE_UINT32);
+
+            batch_buffers_bound = true;
+        }
+
+        if (call->mode == GRAPHIC_DRAW_QUADS) {
+            /*
+             * The index pattern is generated from zero, so
+             * the base vertex is passed as vertexOffset
+             * rather than baked into the indices.
+             */
+            vkCmdDrawIndexed(command_buffer, call->index_count, 1, 0,
+                             (int32_t)call->vertex_offset, 0);
+        } else {
+            vkCmdDraw(command_buffer,
+                      call->vertex_count, 1,
+                      call->vertex_offset, 0);
+        }
+    }
+
+    /*
+     * The window image has to reach PRESENT_SRC even on a frame that
+     * drew nothing, so an empty block is opened rather than skipped.
+     */
+    if (!rendering_active) {
+        rendering_begin(command_buffer, 0, true, backend.clear_color);
+        rendering_active = true;
+    }
+
+    rendering_end(command_buffer, 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -921,10 +1040,6 @@ void graphic_backend_frame_end(void)
 
     if (!backend.frame_active)
         return;
-
-    rendering_begin(command_buffer, 0, true, backend.clear_color);
-    triangle_draw(command_buffer, frame); // TODO: temp. for test
-    rendering_end(command_buffer, 0);
 
     image_barrier(command_buffer,
                   backend.swapchain_images[backend.image_index],
@@ -992,6 +1107,8 @@ void graphic_backend_shutdown(void)
         vkDeviceWaitIdle(backend.device);
 
     graphic_pipeline_shutdown();
+
+    graphic_buffer_destroy(&backend.quad_index_buffer);
 
     for (uint32_t i = 0; i < GRAPHIC_FRAMES_IN_FLIGHT; i++) {
         struct graphic_frame *frame = &backend.frames[i];

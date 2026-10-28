@@ -8,11 +8,27 @@
 #include "default.vert.h"
 #include "default.frag.h"
 
+/*
+ * Two pipelines only. Everything that can be a dynamic state is one,
+ * so the pair differs solely in primitive topology.
+ *
+ * Topology could in principle be dynamic too (vkCmdSetPrimitiveTopology
+ * is core in 1.3), but switching between topology classes such as line
+ * and triangle additionally requires the dynamicPrimitiveTopology-
+ * Unrestricted property, which is not guaranteed. Two pipelines are
+ * free at runtime and portable.
+ */
+enum graphic_pipeline_slot {
+    GRAPHIC_PIPELINE_SLOT_TRIANGLES = 0,
+    GRAPHIC_PIPELINE_SLOT_LINES,
+    GRAPHIC_PIPELINE_SLOT_COUNT,
+};
+
 struct graphic_pipeline_state {
     VkDevice         device;
     VkPipelineLayout layout;
 
-    VkPipeline       pipeline;
+    VkPipeline       pipelines[GRAPHIC_PIPELINE_SLOT_COUNT];
 
     VkShaderModule   vertex_module;
     VkShaderModule   fragment_module;
@@ -199,6 +215,11 @@ static bool pipeline_create(VkPrimitiveTopology topology,
 bool graphic_pipeline_init(VkDevice device,
                            VkFormat color_format)
 {
+    static const VkPrimitiveTopology topology[] = {
+        [GRAPHIC_PIPELINE_SLOT_TRIANGLES] = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+        [GRAPHIC_PIPELINE_SLOT_LINES]     = VK_PRIMITIVE_TOPOLOGY_LINE_LIST,
+    };
+
     pipeline_state.device       = device;
     pipeline_state.color_format = color_format;
 
@@ -219,21 +240,27 @@ bool graphic_pipeline_init(VkDevice device,
         pipeline_state.fragment_module == VK_NULL_HANDLE)
         return false;
 
-    if (!pipeline_create(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-                         pipeline_state.vertex_module,
-                         pipeline_state.fragment_module,
-                         pipeline_state.color_format,
-                         &pipeline_state.pipeline)) {
-        fprintf(stderr, "[graphic] pipeline creation failed\n");
-        return false;
+    for (int slot = 0; slot < GRAPHIC_PIPELINE_SLOT_COUNT; slot++) {
+        if (!pipeline_create(topology[slot],
+                             pipeline_state.vertex_module,
+                             pipeline_state.fragment_module,
+                             pipeline_state.color_format,
+                             &pipeline_state.pipelines[slot])) {
+            fprintf(stderr, "[graphic] pipeline creation failed\n");
+            return false;
+        }
     }
 
     return true;
 }
 
-VkPipeline graphic_pipeline_get(void)
+VkPipeline graphic_pipeline_get(int mode)
 {
-    return pipeline_state.pipeline;
+    int slot = (mode == GRAPHIC_DRAW_LINES) ? 
+               GRAPHIC_PIPELINE_SLOT_LINES :
+               GRAPHIC_PIPELINE_SLOT_TRIANGLES;
+
+    return pipeline_state.pipelines[slot];
 }
 
 VkPipelineLayout graphic_pipeline_layout_get(void)
@@ -246,10 +273,12 @@ void graphic_pipeline_shutdown(void)
     if (pipeline_state.device == VK_NULL_HANDLE)
         return;
 
-    if (pipeline_state.pipeline != VK_NULL_HANDLE)
-        vkDestroyPipeline(pipeline_state.device,
-                          pipeline_state.pipeline,
-                          NULL);
+    for (int slot = 0; slot < GRAPHIC_PIPELINE_SLOT_COUNT; slot++) {
+        if (pipeline_state.pipelines[slot] != VK_NULL_HANDLE)
+            vkDestroyPipeline(pipeline_state.device,
+                              pipeline_state.pipelines[slot],
+                              NULL);
+    }
 
     if (pipeline_state.vertex_module != VK_NULL_HANDLE)
         vkDestroyShaderModule(pipeline_state.device,
