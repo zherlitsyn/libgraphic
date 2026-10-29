@@ -22,6 +22,16 @@ struct graphic_buffer {
     void        *allocation;    /* VmaAllocation */
 };
 
+/*
+ * Named gpu_image, not image: graphic_image_t in the public header is
+ * a block of CPU pixels for window icons, a different thing entirely.
+ */
+struct graphic_gpu_image {
+    VkImage     handle;
+    VkImageView view;
+    void       *allocation;    /* VmaAllocation */
+};
+
 bool graphic_alloc_init(VkInstance       instance,
                         VkPhysicalDevice physical_device,
                         VkDevice         device,
@@ -35,6 +45,16 @@ bool graphic_buffer_create(struct graphic_buffer *buffer,
                            bool                   host_visible);
 
 void graphic_buffer_destroy(struct graphic_buffer *buffer);
+
+bool graphic_gpu_image_create(struct graphic_gpu_image *image,
+                              uint32_t                  width,
+                              uint32_t                  height,
+                              VkFormat                  format,
+                              VkImageUsageFlags         usage,
+                              VkImageAspectFlags        aspect,
+                              VkSampleCountFlagBits     samples);
+
+void graphic_gpu_image_destroy(struct graphic_gpu_image *image);
 
 #ifdef __cplusplus
 }

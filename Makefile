@@ -14,7 +14,7 @@ release: configure-release
 	$(CMAKE) --build $(RELEASE_DIR) -j $(JOBS)
 
 run: all
-	./$(BUILD_DIR)/bin/window
+	./$(BUILD_DIR)/bin/cube
 
 configure: $(BUILD_DIR)/Makefile
 

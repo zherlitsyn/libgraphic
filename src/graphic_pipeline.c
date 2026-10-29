@@ -33,6 +33,7 @@ struct graphic_pipeline_state {
     VkShaderModule   vertex_module;
     VkShaderModule   fragment_module;
     VkFormat         color_format;
+    VkFormat         depth_format;
 };
 
 static struct graphic_pipeline_state pipeline_state;
@@ -76,6 +77,7 @@ static bool pipeline_create_full(VkPrimitiveTopology topology,
                                  VkShaderModule      fragment_module,
                                  VkPipelineLayout    pipeline_layout,
                                  VkFormat            color_format,
+                                 VkFormat            depth_format,
                                  VkPipeline         *out)
 {
     VkPipelineShaderStageCreateInfo stages[2] = { { 0 } };
@@ -137,10 +139,16 @@ static bool pipeline_create_full(VkPrimitiveTopology topology,
      * drivers and V3DV commonly lack. Keep it at one.
      */
     rasterization.lineWidth   = 1.0f;
+    /* cullMode and frontFace are dynamic, set per frame */
 
     VkPipelineMultisampleStateCreateInfo multisample = { 0 };
     multisample.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineDepthStencilStateCreateInfo depth_stencil = { 0 };
+    depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depth_stencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
+    /* depthTestEnable and depthWriteEnable are dynamic */
 
     VkPipelineColorBlendAttachmentState blend_attachment = { 0 };
     /* no blending yet: every fragment replaces what was there */
@@ -157,6 +165,10 @@ static bool pipeline_create_full(VkPrimitiveTopology topology,
     const VkDynamicState dynamic_states[] = {
         VK_DYNAMIC_STATE_VIEWPORT,
         VK_DYNAMIC_STATE_SCISSOR,
+        VK_DYNAMIC_STATE_CULL_MODE,
+        VK_DYNAMIC_STATE_FRONT_FACE,
+        VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
+        VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
     };
 
     VkPipelineDynamicStateCreateInfo dynamic = { 0 };
@@ -174,6 +186,7 @@ static bool pipeline_create_full(VkPrimitiveTopology topology,
     rendering.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
     rendering.colorAttachmentCount    = 1;
     rendering.pColorAttachmentFormats = &color_format;
+    rendering.depthAttachmentFormat   = depth_format;
 
     VkGraphicsPipelineCreateInfo info = { 0 };
     info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -185,6 +198,7 @@ static bool pipeline_create_full(VkPrimitiveTopology topology,
     info.pViewportState      = &viewport;
     info.pRasterizationState = &rasterization;
     info.pMultisampleState   = &multisample;
+    info.pDepthStencilState  = &depth_stencil;
     info.pColorBlendState    = &blend;
     info.pDynamicState       = &dynamic;
     info.layout              = pipeline_layout;
@@ -202,6 +216,7 @@ static bool pipeline_create(VkPrimitiveTopology topology,
                             VkShaderModule      vertex_module,
                             VkShaderModule      fragment_module,
                             VkFormat            color_format,
+                            VkFormat            depth_format,
                             VkPipeline         *out)
 {
     return pipeline_create_full(topology,
@@ -209,11 +224,13 @@ static bool pipeline_create(VkPrimitiveTopology topology,
                                 fragment_module,
                                 pipeline_state.layout,
                                 color_format,
+                                depth_format,
                                 out);
 }
 
 bool graphic_pipeline_init(VkDevice device,
-                           VkFormat color_format)
+                           VkFormat color_format,
+                           VkFormat depth_format)
 {
     static const VkPrimitiveTopology topology[] = {
         [GRAPHIC_PIPELINE_SLOT_TRIANGLES] = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
@@ -222,6 +239,7 @@ bool graphic_pipeline_init(VkDevice device,
 
     pipeline_state.device       = device;
     pipeline_state.color_format = color_format;
+    pipeline_state.depth_format = depth_format;
 
     if (!layout_create()) {
         fprintf(stderr, "[graphic] pipeline layout creation failed\n");
@@ -245,6 +263,7 @@ bool graphic_pipeline_init(VkDevice device,
                              pipeline_state.vertex_module,
                              pipeline_state.fragment_module,
                              pipeline_state.color_format,
+                             pipeline_state.depth_format,
                              &pipeline_state.pipelines[slot])) {
             fprintf(stderr, "[graphic] pipeline creation failed\n");
             return false;

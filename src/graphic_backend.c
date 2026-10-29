@@ -55,6 +55,17 @@ struct graphic_backend {
      */
     VkSemaphore render_finished[GRAPHIC_MAX_SWAPCHAIN_IMAGES];
 
+    VkFormat depth_format;
+    /*
+     * One per frame in flight. A single shared image would need the
+     * frame's clear ordered against the previous frame's depth
+     * testing, and nothing does that implicitly: the acquire
+     * semaphore covers the colour image only. A barrier would work
+     * and would serialise the frames; an image each costs a few
+     * megabytes and costs nothing in time.
+     */
+    struct graphic_gpu_image depth_images[GRAPHIC_FRAMES_IN_FLIGHT];
+
     VkCommandPool command_pool;
     struct graphic_frame frames[GRAPHIC_FRAMES_IN_FLIGHT];
 
@@ -413,6 +424,29 @@ static VkPresentModeKHR present_mode_pick(void)
     return VK_PRESENT_MODE_FIFO_KHR;
 }
 
+static VkFormat depth_format_pick(void)
+{
+    const VkFormat candidates[] = {
+        VK_FORMAT_D32_SFLOAT,
+        VK_FORMAT_X8_D24_UNORM_PACK32,
+        VK_FORMAT_D16_UNORM,
+    };
+
+    for (uint32_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+        VkFormatProperties properties;
+
+        vkGetPhysicalDeviceFormatProperties(backend.physical_device,
+                                            candidates[i],
+                                            &properties);
+
+        if (properties.optimalTilingFeatures &
+            VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)
+            return candidates[i];
+    }
+
+    return VK_FORMAT_UNDEFINED;
+}
+
 static bool swapchain_create(void)
 {
     VkSurfaceCapabilitiesKHR capabilities;
@@ -507,6 +541,23 @@ static bool swapchain_create(void)
             return false;
     }
 
+    for (uint32_t i = 0; i < GRAPHIC_FRAMES_IN_FLIGHT; i++) {
+        /*
+         * Transient: the contents never outlive the render pass
+         * that produced them, which lets a tiled GPU keep the
+         * buffer on chip and never write it to memory at all.
+         */
+        if (!graphic_gpu_image_create(&backend.depth_images[i],
+                                backend.swapchain_extent.width,
+                                backend.swapchain_extent.height,
+                                backend.depth_format,
+                                VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+                                VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
+                                VK_IMAGE_ASPECT_DEPTH_BIT,
+                                VK_SAMPLE_COUNT_1_BIT))
+            return false;
+    }
+
     fprintf(stderr, "[graphic] swapchain: %ux%u, %u images, format %d, "
                     "present mode %d\n",
                     backend.swapchain_extent.width,
@@ -520,6 +571,10 @@ static bool swapchain_create(void)
 
 static void swapchain_destroy(void)
 {
+    for (uint32_t i = 0; i < GRAPHIC_FRAMES_IN_FLIGHT; i++) {
+        graphic_gpu_image_destroy(&backend.depth_images[i]);
+    }
+
     for (uint32_t i = 0; i < backend.swapchain_image_count; i++) {
         if (backend.swapchain_image_views[i] != VK_NULL_HANDLE)
             vkDestroyImageView(backend.device,
@@ -680,10 +735,16 @@ static bool frames_create(void)
                             VK_API_VERSION_1_3))
         return false;
 
+    backend.depth_format = depth_format_pick();
+    if (backend.depth_format == VK_FORMAT_UNDEFINED)
+        return false;
+
     if (!swapchain_create())
         return false;
 
-    if (!graphic_pipeline_init(backend.device, backend.swapchain_format))
+    if (!graphic_pipeline_init(backend.device,
+                               backend.swapchain_format,
+                               backend.depth_format))
         return false;
 
     if (!frames_create())
@@ -857,10 +918,12 @@ static void rendering_begin(VkCommandBuffer   command_buffer,
 {
     VkExtent2D  extent;
     VkImageView color_view;
+    VkImageView depth_view;
 
     if (target_id == 0) {
-        extent = backend.swapchain_extent;
+        extent     = backend.swapchain_extent;
         color_view = backend.swapchain_image_views[backend.image_index];
+        depth_view = backend.depth_images[backend.frame_index].view;
 
         /*
          * UNDEFINED as the old layout says the previous contents
@@ -886,6 +949,22 @@ static void rendering_begin(VkCommandBuffer   command_buffer,
                           VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
                           VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 
+            /*
+             * No wait needed. This frame's depth image was
+             * last used by this same frame index, and the
+             * fence at the top of the frame already
+             * guarantees that work is done.
+             */
+            image_barrier(command_buffer,
+                          backend.depth_images[backend.frame_index].handle,
+                          VK_IMAGE_ASPECT_DEPTH_BIT,
+                          VK_IMAGE_LAYOUT_UNDEFINED,
+                          VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                          VK_PIPELINE_STAGE_2_NONE,
+                          VK_ACCESS_2_NONE,
+                          VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT,
+                          VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+
             backend.swapchain_ready = true;
         }
     } else {
@@ -901,12 +980,24 @@ static void rendering_begin(VkCommandBuffer   command_buffer,
     color.clearValue.color = clear_color;
     color.storeOp          = VK_ATTACHMENT_STORE_OP_STORE;
 
+    VkRenderingAttachmentInfo depth = { 0 };
+    depth.sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+    depth.imageView   = depth_view;
+    depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+    depth.loadOp      = clear ? VK_ATTACHMENT_LOAD_OP_CLEAR :
+                                VK_ATTACHMENT_LOAD_OP_LOAD;
+    /* nothing reads depth after the frame, so do not write it back */
+    depth.storeOp     = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth.clearValue.depthStencil.depth = 1.0f;
+
     VkRenderingInfo rendering = { 0 };
     rendering.sType                = VK_STRUCTURE_TYPE_RENDERING_INFO;
     rendering.renderArea.extent    = extent;
     rendering.layerCount           = 1;
     rendering.colorAttachmentCount = 1;
     rendering.pColorAttachments    = &color;
+    rendering.pDepthAttachment     = (depth_view != VK_NULL_HANDLE) ? 
+                                     &depth : NULL;
 
     vkCmdBeginRendering(command_buffer, &rendering);
 
@@ -964,7 +1055,9 @@ void graphic_backend_draw_calls_record(const struct graphic_draw_call *calls,
          */
         if (!rendering_active) {
             rendering_begin(command_buffer, 0, true, backend.clear_color);
-            rendering_active    = true;
+            rendering_active = true;
+
+            vkCmdSetFrontFace(command_buffer, VK_FRONT_FACE_COUNTER_CLOCKWISE);
             batch_buffers_bound = false;
         }
 
@@ -977,6 +1070,22 @@ void graphic_backend_draw_calls_record(const struct graphic_draw_call *calls,
                               pipeline);
             backend.pipeline_bound = pipeline;
         }
+
+        vkCmdSetDepthTestEnable(command_buffer,
+                                call->depth_test ? VK_TRUE : VK_FALSE);
+
+        vkCmdSetDepthWriteEnable(command_buffer,
+                                 call->depth_test ? VK_TRUE : VK_FALSE);
+
+        /*
+         * Culling follows the depth test, which is the same
+         * thing as saying it follows 2D versus 3D. A flat shape
+         * has no facing, and the winding a caller happens to use
+         * for a triangle or a fan is not something to police.
+         */
+        vkCmdSetCullMode(command_buffer,
+                         call->depth_test ? VK_CULL_MODE_BACK_BIT :
+                                            VK_CULL_MODE_NONE);
 
         struct graphic_push_constants constants;
         memcpy(constants.view_projection,

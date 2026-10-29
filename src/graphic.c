@@ -24,6 +24,7 @@ struct graphic_batch_state {
     mat4_t                   projection;
     mat4_t                   view_projection;
     uint32_t                 view_projection_generation;
+    bool                     depth_test;
 
     int                      matrix_mode;
 
@@ -80,7 +81,8 @@ static struct graphic_draw_call *draw_call_open(int mode)
     if (batch.draw_call_count > 0) {
         call = &batch.draw_calls[batch.draw_call_count - 1];
 
-        if (call->mode                 == mode &&
+        if (call->mode                 == mode             &&
+            call->depth_test           == batch.depth_test &&
             batch.draw_call_generation == batch.view_projection_generation)
             return call;
     }
@@ -93,6 +95,7 @@ static struct graphic_draw_call *draw_call_open(int mode)
     call->vertex_offset   = batch.vertex_count;
     call->vertex_count    = 0;
     call->index_count     = 0;
+    call->depth_test      = batch.depth_test;
     call->view_projection = batch.view_projection;
 
     batch.draw_call_generation = batch.view_projection_generation;
@@ -154,9 +157,19 @@ void graphic_batch_projection_set(mat4_t projection)
     view_projection_update();
 }
 
+void graphic_batch_depth_test_set(bool enabled)
+{
+    batch.depth_test = enabled;
+}
+
 mat4_t graphic_batch_view_projection_get(void)
 {
     return batch.view_projection;
+}
+
+bool graphic_batch_depth_test_get(void)
+{
+    return batch.depth_test;
 }
 
 /*

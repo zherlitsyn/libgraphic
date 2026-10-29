@@ -15,7 +15,8 @@ struct graphic_push_constants {
 };
 
 bool graphic_pipeline_init(VkDevice device,
-                           VkFormat color_format);
+                           VkFormat color_format,
+                           VkFormat depth_format);
 
 void graphic_pipeline_shutdown(void);
 

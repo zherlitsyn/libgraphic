@@ -32,6 +32,7 @@ struct graphic_draw_call {
     uint32_t vertex_offset;
     uint32_t vertex_count;
     uint32_t index_count;    /* non zero only for GRAPHIC_DRAW_QUADS */
+    bool     depth_test;
     mat4_t   view_projection;
 };
 
@@ -45,7 +46,11 @@ void graphic_batch_view_set(mat4_t view);
 
 void graphic_batch_projection_set(mat4_t projection);
 
+void graphic_batch_depth_test_set(bool enabled);
+
 mat4_t graphic_batch_view_projection_get(void);
+
+bool graphic_batch_depth_test_get(void);
 
 uint32_t graphic_batch_capacity_required_get(void);
 

@@ -3,7 +3,7 @@
 // graphic_alloc.h is plain C.
 
 #define VMA_IMPLEMENTATION
-#define VMA_STATIC_VULKAN_FUNCTIONS 1
+#define VMA_STATIC_VULKAN_FUNCTIONS  1
 #define VMA_DYNAMIC_VULKAN_FUNCTIONS 0
 #include <vk_mem_alloc.h>
 
@@ -101,6 +101,94 @@ void graphic_buffer_destroy(struct graphic_buffer *buffer)
     buffer->allocation = nullptr;
     buffer->mapped     = nullptr;
     buffer->size       = 0;
+}
+
+bool graphic_gpu_image_create(struct graphic_gpu_image *image,
+                              uint32_t                  width,
+                              uint32_t                  height,
+                              VkFormat                  format,
+                              VkImageUsageFlags         usage,
+                              VkImageAspectFlags        aspect,
+                              VkSampleCountFlagBits     samples)
+{
+    VkImageCreateInfo image_info = {};
+    image_info.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    image_info.imageType     = VK_IMAGE_TYPE_2D;
+    image_info.format        = format;
+    image_info.extent.width  = width;
+    image_info.extent.height = height;
+    image_info.extent.depth  = 1;
+    image_info.mipLevels     = 1;
+    image_info.arrayLayers   = 1;
+    image_info.samples       = samples;
+    image_info.tiling        = VK_IMAGE_TILING_OPTIMAL;
+    image_info.usage         = usage;
+    image_info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VmaAllocationCreateInfo allocation_info = { 0 };
+    allocation_info.usage = VMA_MEMORY_USAGE_AUTO;
+
+    // A depth buffer is written and discarded every frame, so a
+    // tiled GPU can keep it on chip and never write it out. That is
+    // what lazily allocated memory is for, and it is only legal for
+    // an image created with VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT,
+    // which the depth images now are. Where no such heap exists the
+    // preference is simply ignored.
+    if (usage & VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT)
+        allocation_info.preferredFlags = VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT;
+
+    VkImage       handle     = VK_NULL_HANDLE;
+    VmaAllocation allocation = VK_NULL_HANDLE;
+    if (vmaCreateImage(allocator,
+                       &image_info,
+                       &allocation_info,
+                       &handle,
+                       &allocation,
+                       nullptr) != VK_SUCCESS)
+        return false;
+
+    VkImageViewCreateInfo view_info = {};
+    view_info.sType    = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view_info.image    = handle;
+    view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format   = format;
+
+    view_info.subresourceRange.aspectMask = aspect;
+    view_info.subresourceRange.levelCount = 1;
+    view_info.subresourceRange.layerCount = 1;
+
+    VkImageView view = VK_NULL_HANDLE;
+    if (vkCreateImageView(allocator_device,
+                          &view_info,
+                          nullptr,
+                          &view) != VK_SUCCESS) {
+        vmaDestroyImage(allocator, handle, allocation);
+        return false;
+    }
+
+    image->handle     = handle;
+    image->view       = view;
+    image->allocation = allocation;
+
+    return true;
+}
+
+void graphic_gpu_image_destroy(struct graphic_gpu_image *image)
+{
+    if (image->handle == VK_NULL_HANDLE)
+        return;
+
+    if (image->view != VK_NULL_HANDLE)
+        vkDestroyImageView(allocator_device, image->view, nullptr);
+
+    vmaDestroyImage(allocator,
+                    image->handle,
+                    static_cast<VmaAllocation>(image->allocation));
+
+    image->handle     = VK_NULL_HANDLE;
+    image->view       = VK_NULL_HANDLE;
+    image->allocation = nullptr;
 }
 
 #ifdef __cplusplus

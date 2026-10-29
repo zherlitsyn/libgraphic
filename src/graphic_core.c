@@ -60,6 +60,7 @@ static void projection_2d_set(void)
                                                 1.0f));
 
     graphic_batch_view_set(mat4_identity_get());
+    graphic_batch_depth_test_set(false);
 }
 
 void graphic_window_flags_set(uint32_t flags)
@@ -151,6 +152,48 @@ void graphic_drawing_begin(void)
 void graphic_background_clear(graphic_color_t color)
 {
     graphic_backend_clear_color_set(color);
+}
+
+void graphic_mode3d_begin(graphic_camera3d_t camera)
+{
+    uint32_t width, height;
+    draw_size_get(&width, &height);
+
+    float aspect = (float)width / (float)height;
+
+    if (camera.projection == GRAPHIC_CAMERA_ORTHOGRAPHIC) {
+        float top   = camera.fovy / 2.0f;
+        float right = top * aspect;
+
+        graphic_batch_projection_set(mat4_ortho_get(-right,
+                                                     right,
+                                                    -top,
+                                                     top,
+                                                     0.01f,
+                                                     1000.0f));
+    } else {
+        graphic_batch_projection_set(mat4_perspective_get(camera.fovy * DEG2RAD,
+                                                          aspect,
+                                                          0.01f,
+                                                          1000.0f));
+    }
+
+    graphic_batch_view_set(mat4_look_at_get(camera.position,
+                                            camera.target,
+                                            camera.up));
+
+    graphic_batch_depth_test_set(true);
+
+    graphic_matrix_mode(GRAPHIC_MATRIX_MODELVIEW);
+    graphic_matrix_identity();
+}
+
+void graphic_mode3d_end(void)
+{
+    projection_2d_set();
+
+    graphic_matrix_mode(GRAPHIC_MATRIX_MODELVIEW);
+    graphic_matrix_identity();
 }
 
 /*
