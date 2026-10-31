@@ -110,7 +110,7 @@ mat4_t mat4_identity_get(void)
 mat4_t mat4_multiply_get(mat4_t A,
                          mat4_t B)
 {
-    mat4_t result = {
+    mat4_t result = {{
         A.m[0] * B.m[0]  + A.m[4] * B.m[1]  + A.m[8]  * B.m[2]  + A.m[12] * B.m[3],
         A.m[1] * B.m[0]  + A.m[5] * B.m[1]  + A.m[9]  * B.m[2]  + A.m[13] * B.m[3],
         A.m[2] * B.m[0]  + A.m[6] * B.m[1]  + A.m[10] * B.m[2]  + A.m[14] * B.m[3],
@@ -130,7 +130,7 @@ mat4_t mat4_multiply_get(mat4_t A,
         A.m[1] * B.m[12] + A.m[5] * B.m[13] + A.m[9]  * B.m[14] + A.m[13] * B.m[15],
         A.m[2] * B.m[12] + A.m[6] * B.m[13] + A.m[10] * B.m[14] + A.m[14] * B.m[15],
         A.m[3] * B.m[12] + A.m[7] * B.m[13] + A.m[11] * B.m[14] + A.m[15] * B.m[15]
-    };
+    }};
 
     return result;
 }

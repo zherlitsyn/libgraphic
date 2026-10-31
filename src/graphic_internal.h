@@ -33,6 +33,12 @@ struct graphic_draw_call {
     uint32_t vertex_count;
     uint32_t index_count;    /* non zero only for GRAPHIC_DRAW_QUADS */
     bool     depth_test;
+    int      blend_mode;     /* enum graphic_blend_mode */
+    bool     scissor;
+    int      scissor_x;
+    int      scissor_y;
+    int      scissor_width;
+    int      scissor_height;
     mat4_t   view_projection;
 };
 
@@ -57,5 +63,12 @@ uint32_t graphic_batch_capacity_required_get(void);
 /* implemented in graphic_backend.c, called once per frame from graphic.c */
 void graphic_backend_draw_calls_record(const struct graphic_draw_call *calls,
                                        uint32_t                        count);
+
+/*
+ * Compiles the pipelines a blend mode needs, if they do not exist yet.
+ * Called while the batch is being built, never during recording, so a
+ * pipeline is never created inside a command buffer.
+ */
+void graphic_backend_blend_mode_prepare(int blend_mode);
 
 #endif /* GRAPHIC_INTERNAL_H */

@@ -69,6 +69,7 @@ int main(void)
 
     float angle = 0.0f;
     while (!graphic_window_should_close()) {
+        float time = (float)graphic_time_get();
         angle += 45.0f * graphic_frame_time_get();
 
         graphic_drawing_begin();
@@ -91,6 +92,20 @@ int main(void)
         graphic_matrix_pop();
 
         wheel_draw(640.0f, 270.0f, 140.0f, 24);
+
+        /* three translucent squares, blended by alpha, then added */
+        quad_draw(40.0f, 40.0f, 90.0f, (graphic_color_t){ 255, 64, 64, 128 });
+        quad_draw(80.0f, 70.0f, 90.0f, (graphic_color_t){ 64, 255, 64, 128 });
+
+        graphic_mode_blend_begin(GRAPHIC_BLEND_ADDITIVE);
+        quad_draw(820.0f, 40.0f, 90.0f, (graphic_color_t){ 255, 64, 64, 128 });
+        quad_draw(850.0f, 70.0f, 90.0f, (graphic_color_t){ 64, 255, 64, 128 });
+        graphic_mode_blend_end();
+
+        /* the wheel again, only where a sliding band lets it through */
+        graphic_mode_scissor_begin(560 + (int)(80.0f * sinf(time)), 380, 160, 140);
+        wheel_draw(640.0f, 450.0f, 140.0f, 6);
+        graphic_mode_scissor_end();
 
         graphic_drawing_end();
     }

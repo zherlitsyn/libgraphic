@@ -28,8 +28,15 @@ struct graphic_pipeline_state {
     VkDevice         device;
     VkPipelineLayout layout;
 
-    VkPipeline       pipelines[GRAPHIC_PIPELINE_SLOT_COUNT];
+    /*
+     * Blending is pipeline state in Vulkan 1.3 core, so the table is
+     * two dimensional. Entries are filled in on demand: a program
+     * that only ever uses alpha blending compiles two pipelines, not
+     * twelve.
+     */
+    VkPipeline pipelines[GRAPHIC_PIPELINE_SLOT_COUNT][GRAPHIC_BLEND_MODE_COUNT];
 
+    /* kept alive for lazy compilation, unlike the usual practice */
     VkShaderModule   vertex_module;
     VkShaderModule   fragment_module;
     VkFormat         color_format;
@@ -72,7 +79,56 @@ static bool layout_create(void)
                                   &pipeline_state.layout) == VK_SUCCESS;
 }
 
+/*
+ * Factors chosen to match what raylib produces on OpenGL, so material
+ * settings port over unchanged.
+ */
+static void blend_attachment_fill(int                                  blend_mode,
+                                  VkPipelineColorBlendAttachmentState *out)
+{
+    out->blendEnable         = VK_TRUE;
+    out->colorBlendOp        = VK_BLEND_OP_ADD;
+    out->alphaBlendOp        = VK_BLEND_OP_ADD;
+    out->srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    out->dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    out->colorWriteMask      = VK_COLOR_COMPONENT_R_BIT |
+                               VK_COLOR_COMPONENT_G_BIT |
+                               VK_COLOR_COMPONENT_B_BIT |
+                               VK_COLOR_COMPONENT_A_BIT;
+
+    switch (blend_mode) {
+        case GRAPHIC_BLEND_ADDITIVE:
+            out->srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+            out->dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            break;
+        case GRAPHIC_BLEND_MULTIPLIED:
+            out->srcColorBlendFactor = VK_BLEND_FACTOR_DST_COLOR;
+            out->dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            break;
+        case GRAPHIC_BLEND_ADD_COLORS:
+            out->srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            out->dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            break;
+        case GRAPHIC_BLEND_SUBTRACT_COLORS:
+            out->srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            out->dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            out->colorBlendOp        = VK_BLEND_OP_SUBTRACT;
+            out->alphaBlendOp        = VK_BLEND_OP_SUBTRACT;
+            break;
+        case GRAPHIC_BLEND_ALPHA_PREMULTIPLY:
+            out->srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+            out->dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            break;
+        case GRAPHIC_BLEND_ALPHA:
+        default:
+            out->srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+            out->dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+            break;
+    }
+}
+
 static bool pipeline_create_full(VkPrimitiveTopology topology,
+                                 int                 blend_mode,
                                  VkShaderModule      vertex_module,
                                  VkShaderModule      fragment_module,
                                  VkPipelineLayout    pipeline_layout,
@@ -151,11 +207,7 @@ static bool pipeline_create_full(VkPrimitiveTopology topology,
     /* depthTestEnable and depthWriteEnable are dynamic */
 
     VkPipelineColorBlendAttachmentState blend_attachment = { 0 };
-    /* no blending yet: every fragment replaces what was there */
-    blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
-                                      VK_COLOR_COMPONENT_G_BIT |
-                                      VK_COLOR_COMPONENT_B_BIT |
-                                      VK_COLOR_COMPONENT_A_BIT;
+    blend_attachment_fill(blend_mode, &blend_attachment);
 
     VkPipelineColorBlendStateCreateInfo blend = { 0 };
     blend.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
@@ -213,6 +265,7 @@ static bool pipeline_create_full(VkPrimitiveTopology topology,
 }
 
 static bool pipeline_create(VkPrimitiveTopology topology,
+                            int                 blend_mode,
                             VkShaderModule      vertex_module,
                             VkShaderModule      fragment_module,
                             VkFormat            color_format,
@@ -220,6 +273,7 @@ static bool pipeline_create(VkPrimitiveTopology topology,
                             VkPipeline         *out)
 {
     return pipeline_create_full(topology,
+                                blend_mode,
                                 vertex_module,
                                 fragment_module,
                                 pipeline_state.layout,
@@ -228,15 +282,43 @@ static bool pipeline_create(VkPrimitiveTopology topology,
                                 out);
 }
 
-bool graphic_pipeline_init(VkDevice device,
-                           VkFormat color_format,
-                           VkFormat depth_format)
+bool graphic_pipeline_blend_mode_prepare(int blend_mode)
 {
     static const VkPrimitiveTopology topology[] = {
         [GRAPHIC_PIPELINE_SLOT_TRIANGLES] = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
         [GRAPHIC_PIPELINE_SLOT_LINES]     = VK_PRIMITIVE_TOPOLOGY_LINE_LIST,
     };
 
+    if (blend_mode < 0 || blend_mode >= GRAPHIC_BLEND_MODE_COUNT)
+        return false;
+
+    if (pipeline_state.device == VK_NULL_HANDLE)
+        return false;
+
+    for (int slot = 0; slot < GRAPHIC_PIPELINE_SLOT_COUNT; slot++) {
+        if (pipeline_state.pipelines[slot][blend_mode] != VK_NULL_HANDLE)
+            continue;
+
+        if (!pipeline_create(topology[slot],
+                             blend_mode,
+                             pipeline_state.vertex_module,
+                             pipeline_state.fragment_module,
+                             pipeline_state.color_format,
+                             pipeline_state.depth_format,
+                             &pipeline_state.pipelines[slot][blend_mode])) {
+            fprintf(stderr, "[graphic] pipeline creation failed for blend mode %d\n",
+                            blend_mode);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool graphic_pipeline_init(VkDevice device,
+                           VkFormat color_format,
+                           VkFormat depth_format)
+{
     pipeline_state.device       = device;
     pipeline_state.color_format = color_format;
     pipeline_state.depth_format = depth_format;
@@ -246,6 +328,11 @@ bool graphic_pipeline_init(VkDevice device,
         return false;
     }
 
+    /*
+     * The modules outlive initialisation here, unlike the usual
+     * advice to destroy them straight away, because pipelines for
+     * the other blend modes are compiled later on demand.
+     */
     pipeline_state.vertex_module = 
         shader_module_create(default_vert_spv,
                              sizeof(default_vert_spv));
@@ -258,28 +345,21 @@ bool graphic_pipeline_init(VkDevice device,
         pipeline_state.fragment_module == VK_NULL_HANDLE)
         return false;
 
-    for (int slot = 0; slot < GRAPHIC_PIPELINE_SLOT_COUNT; slot++) {
-        if (!pipeline_create(topology[slot],
-                             pipeline_state.vertex_module,
-                             pipeline_state.fragment_module,
-                             pipeline_state.color_format,
-                             pipeline_state.depth_format,
-                             &pipeline_state.pipelines[slot])) {
-            fprintf(stderr, "[graphic] pipeline creation failed\n");
-            return false;
-        }
-    }
-
-    return true;
+    /* the default mode is always ready, so drawing never stalls */
+    return graphic_pipeline_blend_mode_prepare(GRAPHIC_BLEND_ALPHA);
 }
 
-VkPipeline graphic_pipeline_get(int mode)
+VkPipeline graphic_pipeline_get(int mode,
+                                int blend_mode)
 {
     int slot = (mode == GRAPHIC_DRAW_LINES) ? 
                GRAPHIC_PIPELINE_SLOT_LINES :
                GRAPHIC_PIPELINE_SLOT_TRIANGLES;
 
-    return pipeline_state.pipelines[slot];
+    if (blend_mode < 0 || blend_mode >= GRAPHIC_BLEND_MODE_COUNT)
+        blend_mode = GRAPHIC_BLEND_ALPHA;
+
+    return pipeline_state.pipelines[slot][blend_mode];
 }
 
 VkPipelineLayout graphic_pipeline_layout_get(void)
@@ -293,10 +373,12 @@ void graphic_pipeline_shutdown(void)
         return;
 
     for (int slot = 0; slot < GRAPHIC_PIPELINE_SLOT_COUNT; slot++) {
-        if (pipeline_state.pipelines[slot] != VK_NULL_HANDLE)
-            vkDestroyPipeline(pipeline_state.device,
-                              pipeline_state.pipelines[slot],
-                              NULL);
+        for (int blend = 0; blend < GRAPHIC_BLEND_MODE_COUNT; blend++) {
+            if (pipeline_state.pipelines[slot][blend] != VK_NULL_HANDLE)
+                vkDestroyPipeline(pipeline_state.device,
+                                  pipeline_state.pipelines[slot][blend],
+                                  NULL);
+        }
     }
 
     if (pipeline_state.vertex_module != VK_NULL_HANDLE)

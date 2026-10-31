@@ -25,6 +25,13 @@ struct graphic_batch_state {
     mat4_t                   view_projection;
     uint32_t                 view_projection_generation;
     bool                     depth_test;
+    int blend_mode;
+
+    bool                     scissor;
+    int                      scissor_x;
+    int                      scissor_y;
+    int                      scissor_width;
+    int                      scissor_height;
 
     int                      matrix_mode;
 
@@ -81,8 +88,14 @@ static struct graphic_draw_call *draw_call_open(int mode)
     if (batch.draw_call_count > 0) {
         call = &batch.draw_calls[batch.draw_call_count - 1];
 
-        if (call->mode                 == mode             &&
-            call->depth_test           == batch.depth_test &&
+        if (call->mode                 == mode                 &&
+            call->depth_test           == batch.depth_test     &&
+            call->blend_mode           == batch.blend_mode     &&
+            call->scissor              == batch.scissor        &&
+            call->scissor_x            == batch.scissor_x      &&
+            call->scissor_y            == batch.scissor_y      &&
+            call->scissor_width        == batch.scissor_width  &&
+            call->scissor_height       == batch.scissor_height &&
             batch.draw_call_generation == batch.view_projection_generation)
             return call;
     }
@@ -96,6 +109,12 @@ static struct graphic_draw_call *draw_call_open(int mode)
     call->vertex_count    = 0;
     call->index_count     = 0;
     call->depth_test      = batch.depth_test;
+    call->blend_mode      = batch.blend_mode;
+    call->scissor         = batch.scissor;
+    call->scissor_x       = batch.scissor_x;
+    call->scissor_y       = batch.scissor_y;
+    call->scissor_width   = batch.scissor_width;
+    call->scissor_height  = batch.scissor_height;
     call->view_projection = batch.view_projection;
 
     batch.draw_call_generation = batch.view_projection_generation;
@@ -132,6 +151,9 @@ void graphic_batch_frame_begin(struct graphic_vertex *mapped, uint32_t capacity)
 
     batch.texcoord[0] = 0.0f;
     batch.texcoord[1] = 0.0f;
+
+    batch.blend_mode = GRAPHIC_BLEND_ALPHA;
+    batch.scissor    = false;
 }
 
 void graphic_batch_frame_end(void)
@@ -170,6 +192,61 @@ mat4_t graphic_batch_view_projection_get(void)
 bool graphic_batch_depth_test_get(void)
 {
     return batch.depth_test;
+}
+
+/* ------------------------------------------------------------------ */
+/* render state                                                        */
+/*                                                                     */
+/* None of this flushes anything. A state change only closes the open  */
+/* draw call, so the vertices keep piling into the same buffer and the */
+/* whole frame is still one submit.                                    */
+/* ------------------------------------------------------------------ */
+
+void graphic_mode_blend_begin(int mode)
+{
+    if (mode < 0 || mode >= GRAPHIC_BLEND_MODE_COUNT)
+        return;
+
+    if (batch.inside_begin)
+        graphic_end();
+
+    /* compile now, outside command recording */
+    graphic_backend_blend_mode_prepare(mode);
+
+    batch.blend_mode = mode;
+}
+
+void graphic_mode_blend_end(void)
+{
+    if (batch.inside_begin)
+        graphic_end();
+
+    batch.blend_mode = GRAPHIC_BLEND_ALPHA;
+}
+
+/*
+ * Coordinates are in pixels with the origin at the top left, matching
+ * the framebuffer, so no Y flip happens here even though the viewport
+ * is flipped.
+ */
+void graphic_mode_scissor_begin(int x, int y, int width, int height)
+{
+    if (batch.inside_begin)
+        graphic_end();
+
+    batch.scissor        = true;
+    batch.scissor_x      = x;
+    batch.scissor_y      = y;
+    batch.scissor_width  = (width > 0) ? width : 0;
+    batch.scissor_height = (height > 0) ? height : 0;
+}
+
+void graphic_mode_scissor_end(void)
+{
+    if (batch.inside_begin)
+        graphic_end();
+
+    batch.scissor = false;
 }
 
 /*

@@ -49,6 +49,21 @@ enum graphic_window_flag {
     GRAPHIC_WINDOW_BORDERLESS        = 1 << 14,
 };
 
+/*
+ * Blending is baked into the Vulkan pipeline, not a dynamic state, so
+ * each mode used costs one more pipeline. They are compiled on first
+ * use rather than up front.
+ */
+enum graphic_blend_mode {
+    GRAPHIC_BLEND_ALPHA = 0,    /* src alpha over destination */
+    GRAPHIC_BLEND_ADDITIVE,        /* glow, sparks, light */
+    GRAPHIC_BLEND_MULTIPLIED,    /* shadow and tint */
+    GRAPHIC_BLEND_ADD_COLORS,    /* straight sum, ignores alpha */
+    GRAPHIC_BLEND_SUBTRACT_COLORS,
+    GRAPHIC_BLEND_ALPHA_PREMULTIPLY,
+    GRAPHIC_BLEND_MODE_COUNT,
+};
+
 /* ------------------------------------------------------------------ */
 /* window                            (src/graphic_platform_glfw.c)    */
 /* ------------------------------------------------------------------ */
@@ -109,11 +124,16 @@ void graphic_drawing_end(void);
  * limiter. Call them yourself instead of it when you want full
  * control over the shape of the frame.
  */
-void graphic_screen_buffer_swap(void); /* record, submit, present */
+void graphic_screen_buffer_swap(void);   /* record, submit, present */
 void graphic_background_clear(graphic_color_t color);
 
 void graphic_mode3d_begin(graphic_camera3d_t camera);
 void graphic_mode3d_end(void);
+
+void graphic_mode_blend_begin(int mode); /* enum graphic_blend_mode */
+void graphic_mode_blend_end(void);
+void graphic_mode_scissor_begin(int x, int y, int width, int height);
+void graphic_mode_scissor_end(void);
 
 /* ------------------------------------------------------------------ */
 /* immediate mode geometry           (src/graphic.c)                  */

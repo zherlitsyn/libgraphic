@@ -78,7 +78,9 @@ struct graphic_backend {
     bool              frame_active;
     bool              swapchain_dirty;
     VkPipeline        pipeline_bound;
+    VkRect2D          scissor_bound;
     bool              swapchain_ready; /* window image already transitioned */
+    VkExtent2D        render_extent;   /* of the block being recorded */
 
     bool              vsync;
     bool              validation;
@@ -897,6 +899,8 @@ bool graphic_backend_frame_begin(struct graphic_vertex **vertices,
     backend.swapchain_ready = false;
     backend.pipeline_bound  = VK_NULL_HANDLE;
 
+    memset(&backend.scissor_bound, 0, sizeof(backend.scissor_bound));
+
     *vertices = frame->vertex_buffer.mapped;
     *capacity = frame->vertex_capacity;
 
@@ -1023,6 +1027,9 @@ static void rendering_begin(VkCommandBuffer   command_buffer,
     vkCmdSetViewport(command_buffer, 0, 1, &viewport);
     vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 
+    backend.scissor_bound = scissor;
+    backend.render_extent = extent;
+
     /* a new block invalidates everything bound in the previous one */
     backend.pipeline_bound = VK_NULL_HANDLE;
 }
@@ -1031,6 +1038,53 @@ static void rendering_end(VkCommandBuffer command_buffer,
                           uint32_t        target_id)
 {
     vkCmdEndRendering(command_buffer);
+}
+
+/*
+ * A scissor rectangle reaching outside the attachment is invalid in
+ * Vulkan and the validation layers will say so, but callers routinely
+ * pass a rectangle in window coordinates that a resize, or a smaller
+ * render target, has just made too large. Clamping is friendlier than
+ * crashing.
+ */
+static VkRect2D scissor_clamp(VkRect2D scissor)
+{
+    int32_t max_width  = (int32_t)backend.render_extent.width;
+    int32_t max_height = (int32_t)backend.render_extent.height;
+    int32_t right;
+    int32_t bottom;
+
+    right  = scissor.offset.x + (int32_t)scissor.extent.width;
+    bottom = scissor.offset.y + (int32_t)scissor.extent.height;
+
+    if (scissor.offset.x < 0)
+        scissor.offset.x = 0;
+
+    if (scissor.offset.y < 0)
+        scissor.offset.y = 0;
+
+    if (right > max_width)
+        right = max_width;
+
+    if (bottom > max_height)
+        bottom = max_height;
+
+    scissor.extent.width  = (right > scissor.offset.x) ? 
+                            (uint32_t)(right - scissor.offset.x) : 0;
+
+    scissor.extent.height = (bottom > scissor.offset.y) ?
+                            (uint32_t)(bottom - scissor.offset.y) : 0;
+
+    return scissor;
+}
+
+/*
+ * Compiling a pipeline here, while the batch is still being built, is
+ * what keeps graphic_pipeline_get() a pure lookup during recording.
+ */
+void graphic_backend_blend_mode_prepare(int blend_mode)
+{
+    graphic_pipeline_blend_mode_prepare(blend_mode);
 }
 
 void graphic_backend_draw_calls_record(const struct graphic_draw_call *calls,
@@ -1061,8 +1115,45 @@ void graphic_backend_draw_calls_record(const struct graphic_draw_call *calls,
             batch_buffers_bound = false;
         }
 
-        VkPipeline       pipeline = graphic_pipeline_get(call->mode);
-        VkPipelineLayout layout   = graphic_pipeline_layout_get();
+        VkPipeline pipeline;
+        pipeline = graphic_pipeline_get(call->mode, call->blend_mode);
+
+        VkPipelineLayout layout;
+        layout = graphic_pipeline_layout_get();
+
+        /*
+         * Never compiled, which can only happen if the prepare
+         * call failed. Dropping the geometry beats stalling the
+         * command buffer to build a pipeline here.
+         */
+        if (pipeline == VK_NULL_HANDLE)
+            continue;
+
+        VkRect2D scissor_full;
+        scissor_full.offset.x = 0;
+        scissor_full.offset.y = 0;
+        scissor_full.extent   = backend.render_extent;
+
+        VkRect2D scissor;
+        scissor = scissor_full;
+
+        if (call->scissor) {
+            scissor.offset.x = call->scissor_x;
+            scissor.offset.y = call->scissor_y;
+            scissor.extent.width = (uint32_t)call->scissor_width;
+            scissor.extent.height = (uint32_t)call->scissor_height;
+            scissor = scissor_clamp(scissor);
+        }
+
+        if (scissor.offset.x != backend.scissor_bound.offset.x ||
+            scissor.offset.y != backend.scissor_bound.offset.y ||
+            scissor.extent.width !=
+            backend.scissor_bound.extent.width ||
+            scissor.extent.height !=
+            backend.scissor_bound.extent.height) {
+            vkCmdSetScissor(command_buffer, 0, 1, &scissor);
+            backend.scissor_bound = scissor;
+        }
 
         if (pipeline != backend.pipeline_bound) {
             vkCmdBindPipeline(command_buffer,

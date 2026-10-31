@@ -21,9 +21,17 @@ bool graphic_pipeline_init(VkDevice device,
 void graphic_pipeline_shutdown(void);
 
 /*
- * mode is enum graphic_draw_mode. Quads share the triangle pipeline.
+ * mode is enum graphic_draw_mode, blend_mode is enum
+ * graphic_blend_mode. Quads share the triangle pipeline.
+ *
+ * _prepare compiles the pair for a blend mode; _get only looks up and
+ * returns VK_NULL_HANDLE if it was never prepared, so no compilation
+ * ever happens inside a command buffer.
  */
-VkPipeline graphic_pipeline_get(int mode);
+bool graphic_pipeline_blend_mode_prepare(int blend_mode);
+
+VkPipeline graphic_pipeline_get(int mode,
+                                int blend_mode);
 
 VkPipelineLayout graphic_pipeline_layout_get(void);
 
