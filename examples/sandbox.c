@@ -67,10 +67,27 @@ int main(void)
     if (!graphic_window(960, 480, "graphic - sandbox"))
         return 1;
 
-    float angle = 0.0f;
+    graphic_color_t square   = { 255, 0, 0, 255 };
+    vec2_t          position = { 240.0f, 270.0f };
+    float           angle    = 0.0f;
+
     while (!graphic_window_should_close()) {
         float time = (float)graphic_time_get();
+
         angle += 45.0f * graphic_frame_time_get();
+        /* arrows move the square, a click recolours it */
+        if (graphic_is_key_down(GRAPHIC_KEY_LEFT))
+            position.x -= 200.0f * graphic_frame_time_get();
+        if (graphic_is_key_down(GRAPHIC_KEY_RIGHT))
+            position.x += 200.0f * graphic_frame_time_get();
+        if (graphic_is_key_down(GRAPHIC_KEY_UP))
+            position.y -= 200.0f * graphic_frame_time_get();
+        if (graphic_is_key_down(GRAPHIC_KEY_DOWN))
+            position.y += 200.0f * graphic_frame_time_get();
+        if (graphic_is_mouse_button_pressed(GRAPHIC_MOUSE_BUTTON_LEFT)) {
+            square.r = (unsigned char)(square.r + 70);
+            square.b = (unsigned char)(square.b + 110);
+        }
 
         graphic_drawing_begin();
 
@@ -83,10 +100,9 @@ int main(void)
 
         /* a square turning about its own centre */
         graphic_matrix_push();
-        graphic_translatef(240.0f, 270.0f, 0.0f);
+        graphic_translatef(position.x, position.y, 0.0f);
         graphic_rotatef(angle, 0.0f, 0.0f, 1.0f);
 
-        graphic_color_t square = { 255, 0, 0, 255 };
         quad_draw(-80.0f, -80.0f, 160.0f, square);
 
         graphic_matrix_pop();
@@ -106,6 +122,12 @@ int main(void)
         graphic_mode_scissor_begin(560 + (int)(80.0f * sinf(time)), 380, 160, 140);
         wheel_draw(640.0f, 450.0f, 140.0f, 6);
         graphic_mode_scissor_end();
+
+        /* a marker under the mouse */
+        quad_draw(graphic_mouse_position_get().x - 4.0f,
+                  graphic_mouse_position_get().y - 4.0f,
+                  8.0f,
+                  (graphic_color_t){ 250, 250, 250, 255 });
 
         graphic_drawing_end();
     }

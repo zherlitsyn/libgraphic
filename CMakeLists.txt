@@ -156,6 +156,7 @@ add_library(graphic STATIC
     src/graphic_backend.c
     src/graphic_pipeline.c
     src/graphic_platform_glfw.c
+    src/graphic_input_glfw.c
     src/graphic_alloc.cpp)
 
 find_library(MATH_LIBRARY m)

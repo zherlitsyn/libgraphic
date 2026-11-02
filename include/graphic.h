@@ -5,8 +5,9 @@
 #include <stdint.h>
 
 #include "graphic_linalg.h"
-#include "graphic_color.h"
 #include "graphic_camera.h"
+#include "graphic_color.h"
+#include "graphic_input.h"
 
 /*
  * Public API of the graphic library: an immediate mode drawing layer
@@ -43,8 +44,8 @@ enum graphic_window_flag {
     GRAPHIC_WINDOW_MAXIMIZED         = 1 << 8,
     GRAPHIC_WINDOW_UNFOCUSED         = 1 << 9,
     GRAPHIC_WINDOW_TOPMOST           = 1 << 10,
-    GRAPHIC_WINDOW_TRANSPARENT       = 1 << 11,    /* creation only */
-    GRAPHIC_WINDOW_HIGHDPI           = 1 << 12,    /* creation only */
+    GRAPHIC_WINDOW_TRANSPARENT       = 1 << 11,   /* creation only */
+    GRAPHIC_WINDOW_HIGHDPI           = 1 << 12,   /* creation only */
     GRAPHIC_WINDOW_MOUSE_PASSTHROUGH = 1 << 13,
     GRAPHIC_WINDOW_BORDERLESS        = 1 << 14,
 };
@@ -55,13 +56,19 @@ enum graphic_window_flag {
  * use rather than up front.
  */
 enum graphic_blend_mode {
-    GRAPHIC_BLEND_ALPHA = 0,    /* src alpha over destination */
-    GRAPHIC_BLEND_ADDITIVE,        /* glow, sparks, light */
+    GRAPHIC_BLEND_ALPHA = 0,     /* src alpha over destination */
+    GRAPHIC_BLEND_ADDITIVE,      /* glow, sparks, light */
     GRAPHIC_BLEND_MULTIPLIED,    /* shadow and tint */
     GRAPHIC_BLEND_ADD_COLORS,    /* straight sum, ignores alpha */
     GRAPHIC_BLEND_SUBTRACT_COLORS,
     GRAPHIC_BLEND_ALPHA_PREMULTIPLY,
     GRAPHIC_BLEND_MODE_COUNT,
+};
+
+enum graphic_cursor_mode {
+    GRAPHIC_CURSOR_NORMAL = 0,
+    GRAPHIC_CURSOR_HIDDEN,
+    GRAPHIC_CURSOR_DISABLED,     /* captured and unbounded, for FPS */
 };
 
 /* ------------------------------------------------------------------ */
@@ -86,6 +93,8 @@ void graphic_window_fullscreen_toggle(void);
 
 void graphic_window_title_set(const char *title);
 
+void *graphic_window_handle_get(void);
+
 /* ------------------------------------------------------------------ */
 /* screen and monitors               (src/graphic_platform_glfw.c)    */
 /* ------------------------------------------------------------------ */
@@ -107,6 +116,13 @@ int graphic_monitor_current_get(void);
 /* ------------------------------------------------------------------ */
 
 void graphic_events_poll(void);
+
+void graphic_cursor_show(void);
+void graphic_cursor_hide(void);
+bool graphic_cursor_is_hidden(void);
+void graphic_cursor_enable(void);
+void graphic_cursor_disable(void);
+bool graphic_cursor_is_on_screen(void);
 
 double graphic_time_get(void);
 

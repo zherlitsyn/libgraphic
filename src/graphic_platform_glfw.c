@@ -29,6 +29,7 @@ struct graphic_window_state {
     GLFWwindow *handle;
     uint32_t    flags;   /* requested at creation time */
     bool        resized; /* set by the callback, cleared per frame */
+    bool        cursor_hidden;
 
     /* remembered across a fullscreen or borderless round trip */
     int         windowed_x;
@@ -161,18 +162,26 @@ bool graphic_platform_window_create(int         width,
         glfwIconifyWindow(window.handle);
 
     windowed_geometry_save();
+    graphic_platform_input_init();
 
     return true;
 }
 
 void graphic_platform_window_destroy(void)
 {
+    graphic_platform_input_shutdown();
+
     if (window.handle != NULL) {
         glfwDestroyWindow(window.handle);
         window.handle = NULL;
     }
 
     glfwTerminate();
+}
+
+void *graphic_window_handle_get(void)
+{
+    return window.handle;
 }
 
 /* ------------------------------------------------------------------ */
@@ -396,11 +405,61 @@ int graphic_monitor_current_get(void)
 /* ------------------------------------------------------------------ */
 
 /*
- * The one place per frame where the window system is pumped.
+ * The one place per frame where the window system is pumped. Input
+ * history is rolled over before the pump so that the callbacks fired
+ * inside it land in the current frame.
  */
 void graphic_events_poll(void)
 {
+    window.resized = false;
+ 
+    graphic_platform_input_prepare();
+
     glfwPollEvents();
+}
+
+static void cursor_mode_set(int mode)
+{
+    if (window.handle != NULL)
+        glfwSetInputMode(window.handle, GLFW_CURSOR, mode);
+}
+
+void graphic_cursor_show(void)
+{
+    cursor_mode_set(GLFW_CURSOR_NORMAL);
+    window.cursor_hidden = false;
+}
+
+void graphic_cursor_hide(void)
+{
+    cursor_mode_set(GLFW_CURSOR_HIDDEN);
+    window.cursor_hidden = true;
+}
+
+bool graphic_cursor_is_hidden(void)
+{
+    return window.cursor_hidden;
+}
+
+void graphic_cursor_enable(void)
+{
+    cursor_mode_set(GLFW_CURSOR_NORMAL);
+    window.cursor_hidden = false;
+}
+
+/* captured and unbounded, the mode a first person camera wants */
+void graphic_cursor_disable(void)
+{
+    cursor_mode_set(GLFW_CURSOR_DISABLED);
+    window.cursor_hidden = true;
+}
+
+bool graphic_cursor_is_on_screen(void)
+{
+    if (window.handle == NULL)
+        return false;
+
+    return glfwGetWindowAttrib(window.handle, GLFW_HOVERED) != 0;
 }
 
 double graphic_time_get(void)

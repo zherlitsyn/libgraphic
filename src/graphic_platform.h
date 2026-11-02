@@ -37,4 +37,9 @@ void graphic_platform_framebuffer_size_get(uint32_t *width,
 /* cleared once per frame, drives graphic_window_is_resized() */
 void graphic_platform_resized_flag_clear(void);
 
+/* implemented in graphic_input_glfw.c, driven by graphic_events_poll() */
+void graphic_platform_input_init(void);
+void graphic_platform_input_shutdown(void);
+void graphic_platform_input_prepare(void);
+
 #endif /* GRAPHIC_PLATFORM_H */
