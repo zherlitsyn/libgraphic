@@ -407,7 +407,8 @@ int graphic_monitor_current_get(void)
 /*
  * The one place per frame where the window system is pumped. Input
  * history is rolled over before the pump so that the callbacks fired
- * inside it land in the current frame.
+ * inside it land in the current frame, and gamepads are read after,
+ * since GLFW has no callback for them.
  */
 void graphic_events_poll(void)
 {
@@ -416,6 +417,8 @@ void graphic_events_poll(void)
     graphic_platform_input_prepare();
 
     glfwPollEvents();
+
+    graphic_platform_input_gamepads_update();
 }
 
 static void cursor_mode_set(int mode)

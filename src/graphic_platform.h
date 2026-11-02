@@ -39,7 +39,11 @@ void graphic_platform_resized_flag_clear(void);
 
 /* implemented in graphic_input_glfw.c, driven by graphic_events_poll() */
 void graphic_platform_input_init(void);
+
 void graphic_platform_input_shutdown(void);
+
 void graphic_platform_input_prepare(void);
+
+void graphic_platform_input_gamepads_update(void);
 
 #endif /* GRAPHIC_PLATFORM_H */

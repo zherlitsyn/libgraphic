@@ -151,6 +151,108 @@ enum graphic_mouse_cursor {
     GRAPHIC_MOUSE_CURSOR_NOT_ALLOWED   = 10,
 };
 
+/* Laid out as seen on the pad, not as the driver numbers them */
+enum graphic_gamepad_button {
+    GRAPHIC_GAMEPAD_BUTTON_UNKNOWN = 0,
+    GRAPHIC_GAMEPAD_BUTTON_LEFT_FACE_UP,     /* d-pad        */
+    GRAPHIC_GAMEPAD_BUTTON_LEFT_FACE_RIGHT,
+    GRAPHIC_GAMEPAD_BUTTON_LEFT_FACE_DOWN,
+    GRAPHIC_GAMEPAD_BUTTON_LEFT_FACE_LEFT,
+    GRAPHIC_GAMEPAD_BUTTON_RIGHT_FACE_UP,    /* Y / triangle */
+    GRAPHIC_GAMEPAD_BUTTON_RIGHT_FACE_RIGHT, /* B / circle   */
+    GRAPHIC_GAMEPAD_BUTTON_RIGHT_FACE_DOWN,  /* A / cross    */
+    GRAPHIC_GAMEPAD_BUTTON_RIGHT_FACE_LEFT,  /* X / square   */
+    GRAPHIC_GAMEPAD_BUTTON_LEFT_TRIGGER_1,   /* bumper       */
+    GRAPHIC_GAMEPAD_BUTTON_LEFT_TRIGGER_2,   /* analogue     */
+    GRAPHIC_GAMEPAD_BUTTON_RIGHT_TRIGGER_1,
+    GRAPHIC_GAMEPAD_BUTTON_RIGHT_TRIGGER_2,
+    GRAPHIC_GAMEPAD_BUTTON_MIDDLE_LEFT,      /* select       */
+    GRAPHIC_GAMEPAD_BUTTON_MIDDLE,           /* guide        */
+    GRAPHIC_GAMEPAD_BUTTON_MIDDLE_RIGHT,     /* start        */
+    GRAPHIC_GAMEPAD_BUTTON_LEFT_THUMB,
+    GRAPHIC_GAMEPAD_BUTTON_RIGHT_THUMB,
+};
+
+enum graphic_gamepad_axis {
+    GRAPHIC_GAMEPAD_AXIS_LEFT_X        = 0,
+    GRAPHIC_GAMEPAD_AXIS_LEFT_Y        = 1,
+    GRAPHIC_GAMEPAD_AXIS_RIGHT_X       = 2,
+    GRAPHIC_GAMEPAD_AXIS_RIGHT_Y       = 3,
+    GRAPHIC_GAMEPAD_AXIS_LEFT_TRIGGER  = 4,
+    GRAPHIC_GAMEPAD_AXIS_RIGHT_TRIGGER = 5,
+};
+
+/* ------------------------------------------------------------------ */
+/* input callbacks                                                    */
+/*                                                                    */
+/* The predicates below answer "what is the state now". A caller that */
+/* drives a user interface needs more than that: the order events     */
+/* happened in, and the events a once per frame snapshot cannot see - */
+/* a click that opened and closed between two frames, or a move that  */
+/* landed after a button went down.                                   */
+/*                                                                    */
+/* These hand every event over the moment it arrives, in the order the*/
+/* window system reported it. They run after the internal state is    */
+/* updated, so the predicates keep working unchanged.                 */
+/*                                                                    */
+/* Each is set on its own and carries its own context, so a caller    */
+/* that wants one event does not have to name the other four.         */
+/*                                                                    */
+/* Rules:                                                             */
+/*                                                                    */
+/*   - a callback may be called outside your frame. GLFW fires them   */
+/*     from graphic_events_poll(), but on some platforms also from    */
+/*     the modal loop the system runs while a window is dragged or    */
+/*     resized;                                                       */
+/*   - therefore a callback must only record what happened. No        */
+/*     drawing, no window creation or destruction, no waiting;        */
+/*   - they run on the thread that pumps events, which is the thread  */
+/*     that created the window.                                       */
+/*                                                                    */
+/* Pass NULL to stop receiving that event.                            */
+/* ------------------------------------------------------------------ */
+
+typedef void (*graphic_mouse_move_callback_t)(void *context,
+                                              float x,
+                                              float y);
+
+typedef void (*graphic_mouse_button_callback_t)(void *context,
+                                                int   button,
+                                                bool  down,
+                                                float x,
+                                                float y);
+
+typedef void (*graphic_scroll_callback_t)(void *context,
+                                          float x,
+                                          float y);
+
+typedef void (*graphic_key_callback_t)(void *context,
+                                       int   key,
+                                       bool  down,
+                                       bool  repeat);
+
+/* unicode, already composed by the system */
+typedef void (*graphic_text_callback_t)(void *context,
+                                        int   codepoint);
+
+void graphic_mouse_move_callback_set(graphic_mouse_move_callback_t callback,
+                                     void                         *context);
+
+void graphic_mouse_button_callback_set(graphic_mouse_button_callback_t callback,
+                                       void                           *context);
+
+void graphic_scroll_callback_set(graphic_scroll_callback_t callback,
+                                 void                     *context);
+
+void graphic_key_callback_set(graphic_key_callback_t callback,
+                              void                  *context);
+
+void graphic_text_callback_set(graphic_text_callback_t callback,
+                               void                   *context);
+
+/* forgets all five at once, for a caller shutting a screen down */
+void graphic_input_callbacks_clear(void);
+
 /* ------------------------------------------------------------------ */
 /* keyboard                                                           */
 /* ------------------------------------------------------------------ */
@@ -172,6 +274,40 @@ int graphic_char_pressed_get(void);          /* unicode, 0 when empty */
 const char *graphic_key_name_get(int key);
 
 void graphic_exit_key_set(int key);          /* 0 disables */
+
+/* ------------------------------------------------------------------ */
+/* gamepad                                                            */
+/* ------------------------------------------------------------------ */
+
+bool graphic_is_gamepad_available(int gamepad);
+
+const char *graphic_gamepad_name_get(int gamepad);
+
+bool graphic_is_gamepad_button_pressed(int gamepad,
+                                       int button);
+
+bool graphic_is_gamepad_button_down(int gamepad,
+                                    int button);
+
+bool graphic_is_gamepad_button_released(int gamepad,
+                                        int button);
+
+bool graphic_is_gamepad_button_up(int gamepad,
+                                  int button);
+
+int graphic_gamepad_button_pressed_get(void);
+
+int graphic_gamepad_axis_count_get(int gamepad);
+
+float graphic_gamepad_axis_movement_get(int gamepad,
+                                        int axis);
+
+int graphic_gamepad_mappings_set(const char *mappings);
+
+void graphic_gamepad_vibration_set(int   gamepad,
+                                   float left_motor,
+                                   float right_motor,
+                                   float duration);
 
 /* ------------------------------------------------------------------ */
 /* mouse                                                              */
@@ -207,5 +343,22 @@ float graphic_mouse_wheel_move_get(void);    /* largest of the two axes */
 vec2_t graphic_mouse_wheel_move_v_get(void);
 
 void graphic_mouse_cursor_set(int cursor);
+
+/* ------------------------------------------------------------------ */
+/* touch                                                              */
+/*                                                                    */
+/* On the desktop there is no touch device, so point 0 mirrors the    */
+/* mouse and the count is 1 while a button is held.                   */
+/* ------------------------------------------------------------------ */
+
+int graphic_touch_x_get(void);
+
+int graphic_touch_y_get(void);
+
+vec2_t graphic_touch_position_get(int index);
+
+int graphic_touch_point_id_get(int index);
+
+int graphic_touch_point_count_get(void);
 
 #endif /* GRAPHIC_INPUT_H */

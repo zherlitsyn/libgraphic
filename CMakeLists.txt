@@ -193,7 +193,7 @@ endif()
 # --------------------------------------------------------------------
 
 if(GRAPHIC_BUILD_EXAMPLES)
-    foreach(example window sandbox cube)
+    foreach(example window sandbox cube input)
         add_executable(${example} examples/${example}.c)
         target_link_libraries(${example} PRIVATE graphic)
         set_target_properties(${example} PROPERTIES

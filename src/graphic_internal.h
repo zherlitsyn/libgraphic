@@ -71,4 +71,19 @@ void graphic_backend_draw_calls_record(const struct graphic_draw_call *calls,
  */
 void graphic_backend_blend_mode_prepare(int blend_mode);
 
+/*
+ * Implemented in the input backend. Playback writes straight into the
+ * input state, so everything downstream, including the gesture
+ * recogniser, sees a replayed run exactly as it saw the live one.
+ */
+void graphic_input_key_inject(int  key,
+                              bool down);
+
+void graphic_input_mouse_button_inject(int  button,
+                                       bool down);
+
+void graphic_input_mouse_position_inject(vec2_t position);
+
+void graphic_input_mouse_wheel_inject(vec2_t motion);
+
 #endif /* GRAPHIC_INTERNAL_H */
