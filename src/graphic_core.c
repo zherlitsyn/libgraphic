@@ -154,6 +154,28 @@ void graphic_background_clear(graphic_color_t color)
     graphic_backend_clear_color_set(color);
 }
 
+/*
+ * The 2D mode keeps the screen space projection and puts the camera
+ * into the view matrix instead, so pixel coordinates stay pixel
+ * coordinates and zoom is just a scale.
+ */
+void graphic_mode2d_begin(graphic_camera2d_t camera)
+{
+    projection_2d_set();
+    graphic_batch_view_set(graphic_camera2d_matrix_get(camera));
+
+    graphic_matrix_mode(GRAPHIC_MATRIX_MODELVIEW);
+    graphic_matrix_identity();
+}
+
+void graphic_mode2d_end(void)
+{
+    projection_2d_set();
+
+    graphic_matrix_mode(GRAPHIC_MATRIX_MODELVIEW);
+    graphic_matrix_identity();
+}
+
 void graphic_mode3d_begin(graphic_camera3d_t camera)
 {
     uint32_t width, height;

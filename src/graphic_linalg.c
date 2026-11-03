@@ -91,6 +91,41 @@ vec3_t vec3_transform(vec3_t v,
     return result;
 }
 
+float vec3_distance(vec3_t a, vec3_t b)
+{
+    return vec3_length(vec3_subtract(a, b));
+}
+
+/* Rodrigues again, applied to a vector instead of building a matrix */
+vec3_t vec3_rotate_by_axis_angle(vec3_t v, vec3_t axis, float angle_radians)
+{
+    vec3_t n = vec3_normalize(axis);
+    float s = sinf(angle_radians);
+    float c = cosf(angle_radians);
+    vec3_t term1 = vec3_scale(v, c);
+    vec3_t term2 = vec3_scale(vec3_cross(n, v), s);
+    vec3_t term3 = vec3_scale(n, vec3_dot(n, v) * (1.0f - c));
+
+    return vec3_add(vec3_add(term1, term2), term3);
+}
+
+/* ------------------------------------------------------------------ */
+/* vec4                                                               */
+/* ------------------------------------------------------------------ */
+
+vec4_t vec4_transform(vec4_t v, mat4_t matrix)
+{
+    const float *m = matrix.m;
+    vec4_t result;
+
+    result.x = m[0] * v.x + m[4] * v.y + m[8]  * v.z + m[12] * v.w;
+    result.y = m[1] * v.x + m[5] * v.y + m[9]  * v.z + m[13] * v.w;
+    result.z = m[2] * v.x + m[6] * v.y + m[10] * v.z + m[14] * v.w;
+    result.w = m[3] * v.x + m[7] * v.y + m[11] * v.z + m[15] * v.w;
+
+    return result;
+}
+
 /* ------------------------------------------------------------------ */
 /* mat4                                                               */
 /* ------------------------------------------------------------------ */
@@ -253,6 +288,98 @@ mat4_t mat4_look_at_get(vec3_t eye,
     result.m[12] = -vec3_dot(side, eye);
     result.m[13] = -vec3_dot(upward, eye);
     result.m[14] =  vec3_dot(forward, eye);
+
+    return result;
+}
+
+/*
+ * General 4x4 inverse by cofactor expansion. Used for unprojection,
+ * where the matrix is a projection times a view and is therefore not
+ * affine, so the cheap transpose trick does not apply.
+ *
+ * A singular matrix returns identity rather than infinities.
+ */
+mat4_t mat4_invert_get(mat4_t matrix)
+{
+    const float *m = matrix.m;
+
+    float inverse[16] = {
+        m[5]  * m[10] * m[15] - m[5]  * m[11] * m[14] -
+        m[9]  * m[6]  * m[15] + m[9]  * m[7]  * m[14] +
+        m[13] * m[6]  * m[11] - m[13] * m[7]  * m[10],
+
+       -m[1]  * m[10] * m[15] + m[1]  * m[11] * m[14] +
+        m[9]  * m[2]  * m[15] - m[9]  * m[3]  * m[14] -
+        m[13] * m[2]  * m[11] + m[13] * m[3]  * m[10],
+
+        m[1]  * m[6]  * m[15] - m[1]  * m[7]  * m[14] -
+        m[5]  * m[2]  * m[15] + m[5]  * m[3]  * m[14] +
+        m[13] * m[2]  * m[7]  - m[13] * m[3]  * m[6],
+
+       -m[1]  * m[6]  * m[11] + m[1]  * m[7]  * m[10] +
+        m[5]  * m[2]  * m[11] - m[5]  * m[3]  * m[10] -
+        m[9]  * m[2]  * m[7]  + m[9]  * m[3]  * m[6],
+
+       -m[4]  * m[10] * m[15] + m[4]  * m[11] * m[14] +
+        m[8]  * m[6]  * m[15] - m[8]  * m[7]  * m[14] -
+        m[12] * m[6]  * m[11] + m[12] * m[7]  * m[10],
+
+        m[0]  * m[10] * m[15] - m[0]  * m[11] * m[14] -
+        m[8]  * m[2]  * m[15] + m[8]  * m[3]  * m[14] +
+        m[12] * m[2]  * m[11] - m[12] * m[3]  * m[10],
+
+       -m[0]  * m[6]  * m[15] + m[0]  * m[7]  * m[14] +
+        m[4]  * m[2]  * m[15] - m[4]  * m[3]  * m[14] -
+        m[12] * m[2]  * m[7]  + m[12] * m[3]  * m[6],
+
+        m[0]  * m[6]  * m[11] - m[0]  * m[7]  * m[10] -
+        m[4]  * m[2]  * m[11] + m[4]  * m[3]  * m[10] +
+        m[8]  * m[2]  * m[7]  - m[8]  * m[3]  * m[6],
+
+        m[4]  * m[9]  * m[15] - m[4]  * m[11] * m[13] -
+        m[8]  * m[5]  * m[15] + m[8]  * m[7]  * m[13] +
+        m[12] * m[5]  * m[11] - m[12] * m[7]  * m[9],
+
+       -m[0]  * m[9] * m[15]  + m[0]  * m[11] * m[13] +
+        m[8]  * m[1] * m[15]  - m[8]  * m[3]  * m[13] -
+        m[12] * m[1] * m[11]  + m[12] * m[3]  * m[9],
+
+        m[0]  * m[5] * m[15]  - m[0]  * m[7]  * m[13] -
+        m[4]  * m[1] * m[15]  + m[4]  * m[3]  * m[13] +
+        m[12] * m[1] * m[7]   - m[12] * m[3]  * m[5],
+
+       -m[0]  * m[5] * m[11]  + m[0]  * m[7]  * m[9] +
+        m[4]  * m[1] * m[11]  - m[4]  * m[3]  * m[9] -
+        m[8]  * m[1] * m[7]   + m[8]  * m[3]  * m[5],
+
+       -m[4]  * m[9] * m[14]  + m[4]  * m[10] * m[13] +
+        m[8]  * m[5] * m[14]  - m[8]  * m[6]  * m[13] -
+        m[12] * m[5] * m[10]  + m[12] * m[6]  * m[9],
+
+        m[0]  * m[9] * m[14]  - m[0]  * m[10] * m[13] -
+        m[8]  * m[1] * m[14]  + m[8]  * m[2]  * m[13] +
+        m[12] * m[1] * m[10]  - m[12] * m[2]  * m[9],
+
+       -m[0]  * m[5] * m[14]  + m[0]  * m[6]  * m[13] +
+        m[4]  * m[1] * m[14]  - m[4]  * m[2]  * m[13] -
+        m[12] * m[1] * m[6]   + m[12] * m[2]  * m[5],
+
+        m[0]  * m[5] * m[10]  - m[0]  * m[6]  * m[9] -
+        m[4]  * m[1] * m[10]  + m[4]  * m[2]  * m[9] +
+        m[8]  * m[1] * m[6]   - m[8]  * m[2]  * m[5]
+    };
+
+    float determinant = m[0] * inverse[0] + m[1] * inverse[4] +
+                        m[2] * inverse[8] + m[3] * inverse[12];
+
+    if (determinant > -MATH_EPSILON && determinant < MATH_EPSILON)
+        return mat4_identity_get();
+
+    determinant = 1.0f / determinant;
+
+    mat4_t result;
+    for (int i = 0; i < 16; i++)
+        result.m[i] = inverse[i] * determinant;
 
     return result;
 }

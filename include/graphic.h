@@ -143,6 +143,8 @@ void graphic_drawing_end(void);
 void graphic_screen_buffer_swap(void);   /* record, submit, present */
 void graphic_background_clear(graphic_color_t color);
 
+void graphic_mode2d_begin(graphic_camera2d_t camera);
+void graphic_mode2d_end(void);
 void graphic_mode3d_begin(graphic_camera3d_t camera);
 void graphic_mode3d_end(void);
 

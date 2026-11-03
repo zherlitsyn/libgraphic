@@ -50,6 +50,11 @@ typedef struct mat4 {
     float m[16];
 } mat4_t;
 
+typedef struct ray {
+    vec3_t position;
+    vec3_t direction;        /* normalised */
+} ray_t;
+
 /* ------------------------------------------------------------------ */
 /* vec2                                                               */
 /* ------------------------------------------------------------------ */
@@ -79,10 +84,25 @@ vec3_t vec3_normalize(vec3_t v);
 vec3_t vec3_transform(vec3_t v,
                       mat4_t matrix);
 
+vec3_t vec3_rotate_by_axis_angle(vec3_t v,
+                                 vec3_t axis,
+                                 float  angle_radians);
+
 float vec3_dot(vec3_t a,
                vec3_t b);
 
 float vec3_length(vec3_t v);
+
+float vec3_distance(vec3_t a,
+                    vec3_t b);
+
+/* ------------------------------------------------------------------ */
+/* vec4                                                               */
+/* ------------------------------------------------------------------ */
+
+/* full transform including w, for projection where the divide matters */
+vec4_t vec4_transform(vec4_t v,
+                      mat4_t matrix);
 
 /* ------------------------------------------------------------------ */
 /* mat                                                                */
@@ -119,5 +139,7 @@ mat4_t mat4_ortho_get(float left,
 mat4_t mat4_look_at_get(vec3_t eye,
                         vec3_t target,
                         vec3_t up);
+
+mat4_t mat4_invert_get(mat4_t matrix);
 
 #endif /* LIBLINALG_H */

@@ -79,10 +79,6 @@ static bool layout_create(void)
                                   &pipeline_state.layout) == VK_SUCCESS;
 }
 
-/*
- * Factors chosen to match what raylib produces on OpenGL, so material
- * settings port over unchanged.
- */
 static void blend_attachment_fill(int                                  blend_mode,
                                   VkPipelineColorBlendAttachmentState *out)
 {
