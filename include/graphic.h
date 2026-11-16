@@ -8,6 +8,7 @@
 #include "graphic_camera.h"
 #include "graphic_color.h"
 #include "graphic_input.h"
+#include "graphic_draw.h"
 
 /*
  * Public API of the graphic library: an immediate mode drawing layer

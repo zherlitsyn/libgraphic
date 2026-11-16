@@ -50,6 +50,13 @@ typedef struct mat4 {
     float m[16];
 } mat4_t;
 
+typedef struct rect {
+    float x;
+    float y;
+    float width;
+    float height;
+} rect_t;
+
 typedef struct ray {
     vec3_t position;
     vec3_t direction;        /* normalised */
@@ -59,87 +66,81 @@ typedef struct ray {
 /* vec2                                                               */
 /* ------------------------------------------------------------------ */
 
-vec2_t vec2_add(vec2_t a, vec2_t b);
-vec2_t vec2_subtract(vec2_t a, vec2_t b);
-vec2_t vec2_scale(vec2_t v, float scale);
+vec2_t vec2_add       (vec2_t a, vec2_t b);
+vec2_t vec2_subtract  (vec2_t a, vec2_t b);
+vec2_t vec2_scale     (vec2_t v, float scale);
+float  vec2_length    (vec2_t v);
+float  vec2_dot       (vec2_t a, vec2_t b);
+vec2_t vec2_normalize (vec2_t v);
 
 /* ------------------------------------------------------------------ */
 /* vec3                                                               */
 /* ------------------------------------------------------------------ */
 
-vec3_t vec3_add(vec3_t a,
-                vec3_t b);
+vec3_t vec3_add                  (vec3_t a, vec3_t b);
 
-vec3_t vec3_subtract(vec3_t a,
-                     vec3_t b);
+vec3_t vec3_subtract             (vec3_t a, vec3_t b);
 
-vec3_t vec3_scale(vec3_t v,
-                  float  scale);
+vec3_t vec3_scale                (vec3_t v, float  scale);
 
-vec3_t vec3_cross(vec3_t a,
-                  vec3_t b);
+vec3_t vec3_cross                (vec3_t a, vec3_t b);
 
-vec3_t vec3_normalize(vec3_t v);
+vec3_t vec3_normalize            (vec3_t v);
 
-vec3_t vec3_transform(vec3_t v,
-                      mat4_t matrix);
+vec3_t vec3_transform            (vec3_t v, mat4_t matrix);
 
-vec3_t vec3_rotate_by_axis_angle(vec3_t v,
-                                 vec3_t axis,
-                                 float  angle_radians);
+vec3_t vec3_rotate_by_axis_angle (vec3_t v,
+                                  vec3_t axis,
+                                  float  angle_radians);
 
-float vec3_dot(vec3_t a,
-               vec3_t b);
+float vec3_dot                   (vec3_t a, vec3_t b);
 
-float vec3_length(vec3_t v);
+float vec3_length                (vec3_t v);
 
-float vec3_distance(vec3_t a,
-                    vec3_t b);
+float vec3_distance              (vec3_t a, vec3_t b);
 
 /* ------------------------------------------------------------------ */
 /* vec4                                                               */
 /* ------------------------------------------------------------------ */
 
 /* full transform including w, for projection where the divide matters */
-vec4_t vec4_transform(vec4_t v,
-                      mat4_t matrix);
+vec4_t vec4_transform(vec4_t v, mat4_t matrix);
 
 /* ------------------------------------------------------------------ */
 /* mat                                                                */
 /* ------------------------------------------------------------------ */
 
-mat4_t mat4_identity_get(void);
+mat4_t mat4_identity_get    (void);
 
-mat4_t mat4_multiply_get(mat4_t A,
-                         mat4_t B);
+mat4_t mat4_multiply_get    (mat4_t A, mat4_t B);
 
-mat4_t mat4_translate_get(float x,
-                          float y,
-                          float z);
+mat4_t mat4_translate_get   (float x,
+                             float y,
+                             float z);
 
-mat4_t mat4_rotate_get(vec3_t axis,
-                       float  angle_radians);
+mat4_t mat4_rotate_get      (vec3_t axis,
+                             float  angle_radians);
 
-mat4_t mat4_scale_get(float x,
-                      float y,
-                      float z);
+mat4_t mat4_scale_get       (float x,
+                             float y,
+                             float z);
 
-mat4_t mat4_perspective_get(float fovy_radians,
-                            float aspect,
-                            float near_plane,
-                            float far_plane);
+mat4_t mat4_perspective_get (float fovy_radians,
+                             float aspect,
+                             float near_plane,
+                             float far_plane);
 
-mat4_t mat4_ortho_get(float left,
-                      float right,
-                      float bottom,
-                      float top,
-                      float near_plane,
-                      float far_plane);
+mat4_t mat4_ortho_get       (float left,
+                             float right,
+                             float bottom,
+                             float top,
+                             float near_plane,
+                             float far_plane);
 
-mat4_t mat4_look_at_get(vec3_t eye,
-                        vec3_t target,
-                        vec3_t up);
+mat4_t mat4_look_at_get     (vec3_t eye,
+                             vec3_t target,
+                             vec3_t up);
 
-mat4_t mat4_invert_get(mat4_t matrix);
+mat4_t mat4_invert_get      (mat4_t matrix);
 
 #endif /* LIBLINALG_H */

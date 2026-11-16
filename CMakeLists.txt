@@ -154,6 +154,7 @@ add_library(graphic STATIC
     src/graphic_linalg.c
     src/graphic_core.c
     src/graphic_camera.c
+    src/graphic_draw.c
     src/graphic_backend.c
     src/graphic_pipeline.c
     src/graphic_platform_glfw.c
@@ -194,7 +195,7 @@ endif()
 # --------------------------------------------------------------------
 
 if(GRAPHIC_BUILD_EXAMPLES)
-    foreach(example window cube input camera2d)
+    foreach(example window cube input camera2d shapes)
         add_executable(${example} examples/${example}.c)
         target_link_libraries(${example} PRIVATE graphic)
         set_target_properties(${example} PROPERTIES

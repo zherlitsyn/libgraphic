@@ -388,23 +388,40 @@ mat4_t mat4_invert_get(mat4_t matrix)
 /* vec2                                                               */
 /* ------------------------------------------------------------------ */
 
-vec2_t vec2_add(vec2_t a,
-                vec2_t b)
+vec2_t vec2_add(vec2_t a, vec2_t b)
 {
     vec2_t result = { a.x + b.x, a.y + b.y };
     return result;
 }
 
-vec2_t vec2_subtract(vec2_t a,
-                     vec2_t b)
+vec2_t vec2_subtract(vec2_t a, vec2_t b)
 {
     vec2_t result = { a.x - b.x, a.y - b.y };
     return result;
 }
 
-vec2_t vec2_scale(vec2_t v,
-                  float  scale)
+vec2_t vec2_scale(vec2_t v, float scale)
 {
     vec2_t result = { v.x * scale, v.y * scale };
     return result;
+}
+
+float vec2_length(vec2_t v)
+{
+    return sqrtf(v.x * v.x + v.y * v.y);
+}
+
+float vec2_dot(vec2_t a, vec2_t b)
+{
+    return a.x * b.x + a.y * b.y;
+}
+
+vec2_t vec2_normalize(vec2_t v)
+{
+    float length = vec2_length(v);
+
+    if (length < MATH_EPSILON)
+        return (vec2_t){ 0.0f, 0.0f };
+
+    return vec2_scale(v, 1.0f / length);
 }
