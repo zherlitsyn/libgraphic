@@ -10,6 +10,12 @@
  * and cost no extra submit.
  */
 
+/*
+ * How far a chord may sit from the true arc, in pixels, before another
+ * segment is added. Half a pixel is below what a display can show.
+ */
+#define SMOOTH_CIRCLE_ERROR_RATE    0.5f
+
 /* ------------------------------------------------------------------ */
 /* helpers                                                            */
 /* ------------------------------------------------------------------ */
@@ -21,6 +27,37 @@
 static void color_apply(graphic_color_t color)
 {
     graphic_color4ub(color.r, color.g, color.b, color.a);
+}
+
+/*
+ * Segments needed so the chord never strays more than half a pixel
+ * from the arc. A big circle gets more segments, a tiny one very few.
+ */
+static int circle_segments_get(float radius, float sweep_degrees)
+{
+    /*
+     * Below half a pixel any four points meet the error bound. The
+     * formula must not see such a radius either: from a quarter pixel
+     * down its cosine reaches one, the angle zero, and the division by
+     * that angle made an infinity that was then converted to int,
+     * which C leaves undefined.
+     */
+    if (radius <= SMOOTH_CIRCLE_ERROR_RATE)
+        return 4;
+
+    float threshold = 2.0f * (1.0f - SMOOTH_CIRCLE_ERROR_RATE / radius) *
+                     (1.0f - SMOOTH_CIRCLE_ERROR_RATE / radius) - 1.0f;
+
+    int segments = (int)(ceilf(2.0f * MATH_PI /
+                         acosf(threshold)) * sweep_degrees / 360.0f);
+
+    if (segments < 4)
+        segments = 4;
+
+    if (segments > 512)
+        segments = 512;
+
+    return segments;
 }
 
 static vec2_t point_on_arc(vec2_t center,
@@ -35,6 +72,34 @@ static vec2_t point_on_arc(vec2_t center,
     point.y = center.y + sinf(angle) * radius_v;
 
     return point;
+}
+
+/*
+ * An arc as pairs of line vertices, inside a graphic_begin() of lines
+ * the caller has opened. Fewer than four segments means the count is
+ * worked out from the radius.
+ */
+static void arc_lines_add(vec2_t center,
+                          float  radius,
+                          float  start_angle,
+                          float  sweep,
+                          int    segments)
+{
+    if (segments < 4)
+        segments = circle_segments_get(radius, sweep);
+
+    float step  = sweep / (float)segments;
+    float angle = start_angle;
+
+    for (int i = 0; i < segments; i++) {
+        vec2_t a = point_on_arc(center, radius, radius, angle);
+        vec2_t b = point_on_arc(center, radius, radius, angle + step);
+
+        graphic_vertex2f(a.x, a.y);
+        graphic_vertex2f(b.x, b.y);
+
+        angle += step;
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -171,6 +236,377 @@ void graphic_draw_line_dashed(vec2_t          start,
 }
 
 /* ------------------------------------------------------------------ */
+/* circles, ellipses and rings                                        */
+/* ------------------------------------------------------------------ */
+
+void graphic_draw_circle_sector(vec2_t          center,
+                                float           radius,
+                                float           start_angle,
+                                float           end_angle,
+                                int             segments,
+                                graphic_color_t color)
+{
+    if (radius <= 0.0f)
+        return;
+
+    float sweep = end_angle - start_angle;
+
+    if (sweep < 0.0f) {
+        float swap = start_angle;
+
+        start_angle = end_angle;
+        end_angle   = swap;
+        sweep       = -sweep;
+    }
+
+    if (segments < 4)
+        segments = circle_segments_get(radius, sweep);
+
+    float step  = sweep / (float)segments;
+    float angle = start_angle;
+
+    graphic_begin(GRAPHIC_DRAW_TRIANGLES);
+    color_apply(color);
+
+    /* a fan around the centre, spelt out: the batch has no fans */
+    for (int i = 0; i < segments; i++) {
+        vec2_t a = point_on_arc(center, radius, radius, angle);
+        vec2_t b = point_on_arc(center, radius, radius, angle + step);
+
+        graphic_vertex2f(center.x, center.y);
+        graphic_vertex2f(a.x, a.y);
+        graphic_vertex2f(b.x, b.y);
+
+        angle += step;
+    }
+
+    graphic_end();
+}
+
+void graphic_draw_circle_v(vec2_t          center,
+                           float           radius,
+                           graphic_color_t color)
+{
+    graphic_draw_circle_sector(center, radius, 0.0f, 360.0f, 0, color);
+}
+
+void graphic_draw_circle(int             center_x,
+                         int             center_y,
+                         float           radius,
+                         graphic_color_t color)
+{
+    vec2_t center = { (float)center_x, (float)center_y };
+
+    graphic_draw_circle_v(center, radius, color);
+}
+
+void graphic_draw_circle_gradient(vec2_t          center,
+                                  float           radius,
+                                  graphic_color_t inner,
+                                  graphic_color_t outer)
+{
+    if (radius <= 0.0f)
+        return;
+
+    int   segments = circle_segments_get(radius, 360.0f);
+    float step     = 360.0f / (float)segments;
+    float angle    = 0.0f;
+
+    graphic_begin(GRAPHIC_DRAW_TRIANGLES);
+
+    for (int i = 0; i < segments; i++) {
+        vec2_t a = point_on_arc(center, radius, radius, angle);
+        vec2_t b = point_on_arc(center, radius, radius, angle + step);
+
+        /* the colour is per vertex, so the shader interpolates it */
+        color_apply(inner);
+        graphic_vertex2f(center.x, center.y);
+
+        color_apply(outer);
+        graphic_vertex2f(a.x, a.y);
+        graphic_vertex2f(b.x, b.y);
+
+        angle += step;
+    }
+
+    graphic_end();
+}
+
+void graphic_draw_circle_sector_lines(vec2_t          center,
+                                      float           radius,
+                                      float           start_angle,
+                                      float           end_angle,
+                                      int             segments,
+                                      graphic_color_t color)
+{
+    if (radius <= 0.0f)
+        return;
+
+    float sweep = end_angle - start_angle;
+
+    if (sweep < 0.0f) {
+        float swap = start_angle;
+
+        start_angle = end_angle;
+        end_angle   = swap;
+        sweep       = -sweep;
+    }
+
+    graphic_begin(GRAPHIC_DRAW_LINES);
+    color_apply(color);
+
+    /* an open sector also needs the two radii drawn */
+    if (sweep < 360.0f - MATH_EPSILON) {
+        vec2_t first = point_on_arc(center, radius, radius, start_angle);
+        vec2_t last  = point_on_arc(center, radius, radius, end_angle);
+
+        graphic_vertex2f(center.x, center.y);
+        graphic_vertex2f(first.x, first.y);
+        graphic_vertex2f(center.x, center.y);
+        graphic_vertex2f(last.x, last.y);
+    }
+
+    arc_lines_add(center, radius, start_angle, sweep, segments);
+
+    graphic_end();
+}
+
+void graphic_draw_circle_lines_v(vec2_t          center,
+                                 float           radius,
+                                 graphic_color_t color)
+{
+    graphic_draw_circle_sector_lines(center, radius, 0.0f, 360.0f, 0, color);
+}
+
+void graphic_draw_circle_lines(int             center_x,
+                               int             center_y,
+                               float           radius,
+                               graphic_color_t color)
+{
+    vec2_t center = { (float)center_x, (float)center_y };
+
+    graphic_draw_circle_lines_v(center, radius, color);
+}
+
+void graphic_draw_ellipse_v(vec2_t          center,
+                            float           radius_h,
+                            float           radius_v,
+                            graphic_color_t color)
+{
+    if (radius_h <= 0.0f || radius_v <= 0.0f)
+        return;
+
+    float largest  = (radius_h > radius_v) ? radius_h : radius_v;
+    int   segments = circle_segments_get(largest, 360.0f);
+    float step     = 360.0f / (float)segments;
+    float angle    = 0.0f;
+
+    graphic_begin(GRAPHIC_DRAW_TRIANGLES);
+    color_apply(color);
+
+    for (int i = 0; i < segments; i++) {
+        vec2_t a = point_on_arc(center, radius_h, radius_v, angle);
+        vec2_t b = point_on_arc(center, radius_h, radius_v, angle + step);
+
+        graphic_vertex2f(center.x, center.y);
+        graphic_vertex2f(a.x, a.y);
+        graphic_vertex2f(b.x, b.y);
+
+        angle += step;
+    }
+
+    graphic_end();
+}
+
+void graphic_draw_ellipse(int             center_x,
+                          int             center_y,
+                          float           radius_h,
+                          float           radius_v,
+                          graphic_color_t color)
+{
+    vec2_t center = { (float)center_x, (float)center_y };
+
+    graphic_draw_ellipse_v(center, radius_h, radius_v, color);
+}
+
+void graphic_draw_ellipse_lines_v(vec2_t          center,
+                                  float           radius_h,
+                                  float           radius_v,
+                                  graphic_color_t color)
+{
+    if (radius_h <= 0.0f || radius_v <= 0.0f)
+        return;
+
+    float largest  = (radius_h > radius_v) ? radius_h : radius_v;
+    int   segments = circle_segments_get(largest, 360.0f);
+    float step     = 360.0f / (float)segments;
+    float angle    = 0.0f;
+
+    graphic_begin(GRAPHIC_DRAW_LINES);
+    color_apply(color);
+
+    for (int i = 0; i < segments; i++) {
+        vec2_t a = point_on_arc(center, radius_h, radius_v, angle);
+        vec2_t b = point_on_arc(center, radius_h, radius_v, angle + step);
+
+        graphic_vertex2f(a.x, a.y);
+        graphic_vertex2f(b.x, b.y);
+
+        angle += step;
+    }
+
+    graphic_end();
+}
+
+void graphic_draw_ellipse_lines(int             center_x,
+                                int             center_y,
+                                float           radius_h,
+                                float           radius_v,
+                                graphic_color_t color)
+{
+    vec2_t center = { (float)center_x, (float)center_y };
+
+    graphic_draw_ellipse_lines_v(center, radius_h, radius_v, color);
+}
+
+void graphic_draw_ring(vec2_t          center,
+                       float           inner_radius,
+                       float           outer_radius,
+                       float           start_angle,
+                       float           end_angle,
+                       int             segments,
+                       graphic_color_t color)
+{
+    if (outer_radius <= 0.0f)
+        return;
+
+    if (inner_radius < 0.0f)
+        inner_radius = 0.0f;
+
+    if (inner_radius >= outer_radius) {
+        graphic_draw_circle_sector_lines(center,
+                                         outer_radius,
+                                         start_angle,
+                                         end_angle,
+                                         segments,
+                                         color);
+        return;
+    }
+
+    float sweep = end_angle - start_angle;
+
+    if (sweep < 0.0f) {
+        float swap = start_angle;
+
+        start_angle = end_angle;
+        end_angle   = swap;
+        sweep       = -sweep;
+    }
+
+    if (segments < 4)
+        segments = circle_segments_get(outer_radius, sweep);
+
+    float step  = sweep / (float)segments;
+    float angle = start_angle;
+
+    graphic_begin(GRAPHIC_DRAW_QUADS);
+    color_apply(color);
+
+    for (int i = 0; i < segments; i++) {
+        vec2_t inner_a = point_on_arc(center,
+                                      inner_radius,
+                                      inner_radius,
+                                      angle);
+        vec2_t outer_a = point_on_arc(center,
+                                      outer_radius,
+                                      outer_radius,
+                                      angle);
+        vec2_t outer_b = point_on_arc(center,
+                                      outer_radius,
+                                      outer_radius,
+                                      angle + step);
+        vec2_t inner_b = point_on_arc(center,
+                                      inner_radius,
+                                      inner_radius,
+                                      angle + step);
+
+        graphic_vertex2f(inner_a.x, inner_a.y);
+        graphic_vertex2f(outer_a.x, outer_a.y);
+        graphic_vertex2f(outer_b.x, outer_b.y);
+        graphic_vertex2f(inner_b.x, inner_b.y);
+
+        angle += step;
+    }
+
+    graphic_end();
+}
+
+/*
+ * The two arcs, joined at the ends when the ring is open. The arcs are
+ * drawn bare: built from two sector outlines, as this function once
+ * was, each brought its radii along and an open ring showed spokes
+ * across its hole to the centre.
+ */
+void graphic_draw_ring_lines(vec2_t          center,
+                             float           inner_radius,
+                             float           outer_radius,
+                             float           start_angle,
+                             float           end_angle,
+                             int             segments,
+                             graphic_color_t color)
+{
+    if (outer_radius <= 0.0f)
+        return;
+
+    if (inner_radius < 0.0f)
+        inner_radius = 0.0f;
+
+    float sweep = end_angle - start_angle;
+
+    if (sweep < 0.0f) {
+        float swap = start_angle;
+
+        start_angle = end_angle;
+        end_angle   = swap;
+        sweep       = -sweep;
+    }
+
+    graphic_begin(GRAPHIC_DRAW_LINES);
+    color_apply(color);
+
+    arc_lines_add(center, outer_radius, start_angle, sweep, segments);
+    if (inner_radius > 0.0f)
+        arc_lines_add(center, inner_radius, start_angle, sweep, segments);
+
+    /* close the two open ends of the arc */
+    if (sweep < 360.0f - MATH_EPSILON) {
+        vec2_t inner_start = point_on_arc(center,
+                                          inner_radius,
+                                          inner_radius,
+                                          start_angle);
+        vec2_t outer_start = point_on_arc(center,
+                                          outer_radius,
+                                          outer_radius,
+                                          start_angle);
+        vec2_t inner_end = point_on_arc(center,
+                                        inner_radius,
+                                        inner_radius,
+                                        end_angle);
+        vec2_t outer_end = point_on_arc(center,
+                                        outer_radius,
+                                        outer_radius,
+                                        end_angle);
+
+        graphic_vertex2f(inner_start.x, inner_start.y);
+        graphic_vertex2f(outer_start.x, outer_start.y);
+        graphic_vertex2f(inner_end.x, inner_end.y);
+        graphic_vertex2f(outer_end.x, outer_end.y);
+    }
+
+    graphic_end();
+}
+
+/* ------------------------------------------------------------------ */
 /* rectangles                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -240,7 +676,6 @@ void graphic_draw_rectangle_pro(rect_t          rectangle,
     float  y            = rectangle.y;
     float  dx           = -origin.x;
     float  dy           = -origin.y;
-    
 
     if (rotation != 0.0f) {
         float radians = rotation * DEG2RAD;

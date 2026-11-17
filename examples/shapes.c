@@ -41,6 +41,52 @@ static void row_lines(float y)
     graphic_draw_line_strip(strip, 5, red);
 }
 
+static void row_circles(float y)
+{
+    graphic_draw_circle(60, (int)y, 26.0f, red);
+
+    graphic_draw_circle_lines(140, (int)y, 26.0f, white);
+
+    graphic_draw_circle_gradient((vec2_t){ 220.0f, y },
+                                 28.0f,
+                                 amber,
+                                 (graphic_color_t){ 240, 180, 60, 0 });
+
+    graphic_draw_circle_sector((vec2_t){ 300.0f, y },
+                               30.0f,
+                               0.0f,
+                               120.0f,
+                               0,
+                               green);
+
+    graphic_draw_circle_sector_lines((vec2_t){ 380.0f, y },
+                                     30.0f,
+                                     30.0f,
+                                     300.0f,
+                                     0,
+                                     blue);
+
+    graphic_draw_ellipse(470, (int)y, 40.0f, 22.0f, grey);
+
+    graphic_draw_ellipse_lines(560, (int)y, 40.0f, 22.0f, white);
+
+    graphic_draw_ring((vec2_t){ 650.0f, y },
+                      16.0f,
+                      30.0f,
+                      0.0f,
+                      270.0f,
+                      0,
+                      amber);
+
+    graphic_draw_ring_lines((vec2_t){ 730.0f, y },
+                            16.0f,
+                            30.0f,
+                            45.0f,
+                            315.0f,
+                            0,
+                            white);
+}
+
 static void row_rectangles(float y, float time)
 {
     graphic_draw_rectangle(30, (int)y - 25, 70, 50, red);
@@ -123,6 +169,7 @@ int main(void)
         graphic_background_clear(background);
 
         row_lines(60.0f);
+        row_circles(150.0f);
         row_rectangles(250.0f, time);
         row_polygons(350.0f);
 
