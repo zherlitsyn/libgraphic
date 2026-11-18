@@ -184,6 +184,66 @@ void graphic_draw_rectangle_lines_ex    (rect_t          rectangle,
                                          float           line_thick,
                                          graphic_color_t color);
 
+/*
+ * Indices into the roundness array of the rounded rectangle calls. The
+ * order is the one graphic_draw_rectangle_gradient_ex() takes its
+ * corner colours in.
+ */
+enum graphic_corner {
+    GRAPHIC_CORNER_TOP_LEFT = 0,
+    GRAPHIC_CORNER_BOTTOM_LEFT,
+    GRAPHIC_CORNER_BOTTOM_RIGHT,
+    GRAPHIC_CORNER_TOP_RIGHT,
+    GRAPHIC_CORNER_COUNT
+};
+
+/*
+ * roundness holds one value per corner, indexed by enum graphic_corner.
+ * Each runs from 0, a square corner, to 1, a radius of half the shorter
+ * side. So two neighbouring corners can never overlap, and all four
+ * at 1 gives fully rounded ends. NULL is a plain rectangle.
+ */
+void graphic_draw_rectangle_rounded          (rect_t          rectangle,
+                                              const float     roundness[4],
+                                              int             segments,
+                                              graphic_color_t color);
+/*
+ * A rounded rectangle whose four corners carry four colours, blended
+ * across it the way graphic_draw_rectangle_gradient_ex() blends a
+ * square one. No shader: the batch already interpolates vertex
+ * colours, so this only has to work out the colour at each vertex it
+ * emits.
+ *
+ * Drawn as one fan from the middle, like the solid version. A fan has
+ * no diagonal seam, which a quad split into two triangles does show
+ * when its four corners differ enough, and it puts the whole shape in
+ * one run of triangles.
+ */
+void graphic_draw_rectangle_rounded_gradient (rect_t          rectangle,
+                                              float           roundness,
+                                              int             segments,
+                                              graphic_color_t top_left,
+                                              graphic_color_t bottom_left,
+                                              graphic_color_t bottom_right,
+                                              graphic_color_t top_right);
+
+/*
+ * The outline is centred on the edge of the rectangle, half the
+ * thickness inside and half outside. The exception is all four corners
+ * square (or roundness NULL), which draws graphic_draw_rectangle_lines_ex(),
+ * whose border sits entirely inside.
+ */
+void graphic_draw_rectangle_rounded_lines    (rect_t          rectangle,
+                                              const float     roundness[4],
+                                              int             segments,
+                                              graphic_color_t color);
+
+void graphic_draw_rectangle_rounded_lines_ex (rect_t          rectangle,
+                                              const float     roundness[4],
+                                              int             segments,
+                                              float           line_thick,
+                                              graphic_color_t color);
+
 /* ------------------------------------------------------------------ */
 /* triangles and polygons                                             */
 /* ------------------------------------------------------------------ */

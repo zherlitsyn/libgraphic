@@ -101,6 +101,24 @@ static void row_rectangles(float y, float time)
 
     graphic_draw_rectangle_gradient_h(390, (int)y - 25, 70, 50, green, blue);
 
+    /* top left, bottom left, bottom right, top right */
+    graphic_draw_rectangle_rounded((rect_t){ 480.0f, y - 25.0f, 80.0f, 50.0f },
+                                   (const float[4]){ 0.5f, 0.5f, 0.5f, 0.5f },
+                                   0,
+                                   grey);
+
+    graphic_draw_rectangle_rounded_lines_ex((rect_t){ 580.0f,
+                                                      y - 25.0f,
+                                                      80.0f,
+                                                      50.0f },
+                                            (const float[4]){ 1.0f,
+                                                              0.0f,
+                                                              1.0f,
+                                                              0.0f },
+                                            0,
+                                            3.0f,
+                                            white);
+
     /* the pivot is the centre, so it spins in place */
     graphic_draw_rectangle_pro((rect_t){ 720.0f, y, 60.0f, 40.0f },
                                (vec2_t){ 30.0f, 20.0f },

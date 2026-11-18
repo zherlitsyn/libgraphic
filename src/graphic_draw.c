@@ -808,6 +808,396 @@ void graphic_draw_rectangle_lines_ex(rect_t          rectangle,
     graphic_draw_rectangle_rec(right, color);
 }
 
+/*
+ * The corners in the order an outline is walked, clockwise on screen
+ * from the top left because y grows downwards, and the angle each
+ * corner's arc starts at.
+ */
+static const int corner_walk[4] = {
+    GRAPHIC_CORNER_TOP_LEFT,
+    GRAPHIC_CORNER_TOP_RIGHT,
+    GRAPHIC_CORNER_BOTTOM_RIGHT,
+    GRAPHIC_CORNER_BOTTOM_LEFT
+};
+
+static const float corner_start_angle[4] = { 180.0f, 270.0f, 0.0f, 90.0f };
+
+/*
+ * Radius of every corner, in walk order. Each is capped at half the
+ * shorter side, so neighbouring arcs can meet but never cross. Returns
+ * whether any corner is rounded at all.
+ */
+static bool corner_radii_get(rect_t      rectangle,
+                             const float roundness[4],
+                             float       radius[4])
+{
+    float shortest = (rectangle.width < rectangle.height) ?
+                      rectangle.width : rectangle.height;
+    bool rounded   = false;
+
+    for (int i = 0; i < 4; i++) {
+        float value = (roundness != NULL) ? roundness[corner_walk[i]] : 0.0f;
+
+        /* written this way round so a NaN counts as square too */
+        if (!(value > 0.0f))
+            value = 0.0f;
+        if (value > 1.0f)
+            value = 1.0f;
+
+        radius[i] = shortest * value / 2.0f;
+        if (radius[i] > 0.0f)
+            rounded = true;
+    }
+
+    return rounded;
+}
+
+/* the centre of a corner's arc, which for a square corner is the corner */
+static vec2_t corner_center_get(rect_t rectangle, int walk, float radius)
+{
+    float left   = rectangle.x + radius;
+    float right  = rectangle.x + rectangle.width - radius;
+    float top    = rectangle.y + radius;
+    float bottom = rectangle.y + rectangle.height - radius;
+
+    switch (walk) {
+        case 0:
+            return (vec2_t){  left,    top };
+        case 1:
+            return (vec2_t){ right,    top };
+        case 2:
+            return (vec2_t){ right, bottom };
+        default:
+            return (vec2_t){  left, bottom };
+    }
+}
+
+/*
+ * Drawn as one fan from the middle over the outline. The corners now
+ * differ, so the old cross of three rectangles no longer fits. The
+ * shape is still convex, so a fan still covers it exactly, and it
+ * lands in one run of triangles. A square corner contributes its one
+ * point to the outline.
+ */
+void graphic_draw_rectangle_rounded(rect_t          rectangle,
+                                    const float     roundness[4],
+                                    int             segments,
+                                    graphic_color_t color)
+{
+    float  radius[4];
+    bool   started  = false;
+    vec2_t first    = { 0.0f, 0.0f };
+    vec2_t previous = { 0.0f, 0.0f };
+
+    if (rectangle.width < 1.0f ||
+        rectangle.height < 1.0f ||
+        !corner_radii_get(rectangle, roundness, radius)) {
+        graphic_draw_rectangle_rec(rectangle, color);
+        return;
+    }
+
+    vec2_t middle = (vec2_t){ rectangle.x + rectangle.width / 2.0f,
+                              rectangle.y + rectangle.height / 2.0f };
+
+    graphic_begin(GRAPHIC_DRAW_TRIANGLES);
+    color_apply(color);
+
+    for (int corner = 0; corner < 4; corner++) {
+        vec2_t center = corner_center_get(rectangle, corner, radius[corner]);
+        int    steps  = 0;
+
+        if (radius[corner] > 0.0f)
+            steps = (segments < 4) ?
+                    circle_segments_get(radius[corner], 90.0f) :
+                    segments;
+
+        /*
+         * Step 0 of each corner also closes the straight edge from
+         * the previous corner. Where two full arcs meet that
+         * triangle is degenerate, which costs nothing.
+         */
+        for (int step = 0; step <= steps; step++) {
+            vec2_t point = center;
+
+            if (steps > 0)
+                point = point_on_arc(center,
+                                     radius[corner],
+                                     radius[corner],
+                                     corner_start_angle[corner] +
+                                     90.0f * (float)step / (float)steps);
+
+            if (started) {
+                graphic_vertex2f(middle.x, middle.y);
+                graphic_vertex2f(previous.x, previous.y);
+                graphic_vertex2f(point.x, point.y);
+            } else {
+                first   = point;
+                started = true;
+            }
+
+            previous = point;
+        }
+    }
+
+    /* the left edge, back to where the walk began */
+    graphic_vertex2f(middle.x, middle.y);
+    graphic_vertex2f(previous.x, previous.y);
+    graphic_vertex2f(first.x, first.y);
+
+    graphic_end();
+}
+
+/*
+ * The outline is centred on the edge, as graphic_draw_line_ex() centres
+ * a line. A rounded corner is a ring along the arc and its edges stop
+ * where the arc begins. At a square corner the horizontal edge runs
+ * half the thickness past the corner and the vertical one stops half
+ * the thickness short of it. That fills the corner square exactly
+ * once, with no notch outside and no overlap to show through a
+ * translucent colour.
+ */
+void graphic_draw_rectangle_rounded_lines_ex(rect_t          rectangle,
+                                             const float     roundness[4],
+                                             int             segments,
+                                             float           line_thick,
+                                             graphic_color_t color)
+{
+    float radius[4];
+    float along_h[4]; /* where the horizontal edge stops */
+    float along_v[4]; /* and the vertical one */
+
+    if (line_thick <= 0.0f)
+        return;
+
+    if (!corner_radii_get(rectangle, roundness, radius)) {
+        graphic_draw_rectangle_lines_ex(rectangle, line_thick, color);
+        return;
+    }
+
+    float half = line_thick / 2.0f;
+
+    /* inset from the corner, in walk order */
+    for (int corner = 0; corner < 4; corner++) {
+        along_h[corner] = (radius[corner] > 0.0f) ? radius[corner] : -half;
+        along_v[corner] = (radius[corner] > 0.0f) ? radius[corner] : half;
+    }
+
+    /* four straight edges */
+    vec2_t a = (vec2_t){ rectangle.x + along_h[0], rectangle.y };
+    vec2_t b = (vec2_t){ rectangle.x + rectangle.width - along_h[1], rectangle.y };
+    graphic_draw_line_ex(a, b, line_thick, color);
+
+    a = (vec2_t){ rectangle.x + rectangle.width, rectangle.y + along_v[1] };
+    b = (vec2_t){ rectangle.x + rectangle.width,
+                  rectangle.y + rectangle.height - along_v[2] };
+    graphic_draw_line_ex(a, b, line_thick, color);
+
+    a = (vec2_t){ rectangle.x + along_h[3], rectangle.y + rectangle.height };
+    b = (vec2_t){ rectangle.x + rectangle.width - along_h[2],
+                  rectangle.y + rectangle.height };
+    graphic_draw_line_ex(a, b, line_thick, color);
+
+    a = (vec2_t){ rectangle.x, rectangle.y + along_v[0] };
+    b = (vec2_t){ rectangle.x, rectangle.y + rectangle.height - along_v[3] };
+    graphic_draw_line_ex(a, b, line_thick, color);
+
+    /* and the rounded corners, drawn as rings so they carry thickness */
+    for (int corner = 0; corner < 4; corner++) {
+        int steps;
+
+        if (radius[corner] <= 0.0f)
+            continue;
+
+        steps = (segments < 4) ? circle_segments_get(radius[corner], 90.0f) :
+                                 segments;
+
+        graphic_draw_ring(corner_center_get(rectangle, corner, radius[corner]),
+                          radius[corner] - half,
+                          radius[corner] + half,
+                          corner_start_angle[corner],
+                          corner_start_angle[corner] + 90.0f,
+                          steps,
+                          color);
+    }
+}
+
+/*
+ * The colour at a point, blended from the four corners of the
+ * rectangle the way a bilinear sample would.
+ */
+static graphic_color_t corner_blend(rect_t          rectangle,
+                                    vec2_t          point,
+                                    graphic_color_t top_left,
+                                    graphic_color_t bottom_left,
+                                    graphic_color_t bottom_right,
+                                    graphic_color_t top_right)
+{
+    float u = (rectangle.width > 0.0f) ?
+              (point.x - rectangle.x) / rectangle.width :
+              0.0f;
+    float v = (rectangle.height > 0.0f) ?
+              (point.y - rectangle.y) / rectangle.height :
+              0.0f;
+    graphic_color_t top    = graphic_color_lerp(top_left, top_right, u);
+    graphic_color_t bottom = graphic_color_lerp(bottom_left, bottom_right, u);
+
+    return graphic_color_lerp(top, bottom, v);
+}
+
+static void blended_vertex(rect_t          rectangle,
+                           vec2_t          point,
+                           graphic_color_t top_left,
+                           graphic_color_t bottom_left,
+                           graphic_color_t bottom_right,
+                           graphic_color_t top_right)
+{
+    color_apply(corner_blend(rectangle,
+                             point,
+                             top_left,
+                             bottom_left,
+                             bottom_right,
+                             top_right));
+    graphic_vertex2f(point.x, point.y);
+}
+
+void graphic_draw_rectangle_rounded_gradient(rect_t          rectangle,
+                                             float           roundness,
+                                             int             segments,
+                                             graphic_color_t top_left,
+                                             graphic_color_t bottom_left,
+                                             graphic_color_t bottom_right,
+                                             graphic_color_t top_right)
+{
+    if (rectangle.width < 1.0f || rectangle.height < 1.0f)
+        return;
+
+    if (roundness < 0.0f)
+        roundness = 0.0f;
+
+    if (roundness > 1.0f)
+        roundness = 1.0f;
+
+    float shortest = (rectangle.width < rectangle.height) ?
+                      rectangle.width : rectangle.height;
+    float radius   = shortest * roundness / 2.0f;
+
+    if (segments < 4)
+        segments = circle_segments_get(radius, 90.0f);
+
+    vec2_t middle = (vec2_t){ rectangle.x + rectangle.width / 2.0f,
+                              rectangle.y + rectangle.height / 2.0f };
+
+    /* the four arc centres, in the order the outline is walked */
+    /* clockwise on screen, because y grows downwards           */
+    vec2_t centers[4];
+    centers[0] = (vec2_t){ rectangle.x + radius, rectangle.y + radius };
+    centers[1] = (vec2_t){ rectangle.x + rectangle.width - radius,
+                           rectangle.y + radius };
+    centers[2] = (vec2_t){ rectangle.x + rectangle.width - radius,
+                           rectangle.y + rectangle.height - radius };
+    centers[3] = (vec2_t){ rectangle.x + radius,
+                           rectangle.y + rectangle.height - radius };
+
+    graphic_begin(GRAPHIC_DRAW_TRIANGLES);
+
+    /*
+     * One triangle per step of the outline, all sharing the middle.
+     * Interpolating three exactly correct colours over a triangle
+     * reproduces a horizontal or vertical gradient exactly; only the
+     * cross term of four differing corners is approximated, and the
+     * fan approximates it symmetrically.
+     */
+    float start_angle[4] = { 180.0f, 270.0f, 0.0f, 90.0f };
+    for (int corner = 0; corner < 4; corner++) {
+        for (int step = 0; step < segments; step++) {
+            float from = (start_angle[corner] +
+                          90.0f * (float)step / (float)segments) * DEG2RAD;
+
+            float to   = (start_angle[corner] +
+                          90.0f * (float)(step + 1) / (float)segments) * DEG2RAD;
+
+            vec2_t a   = { centers[corner].x + cosf(from) * radius,
+                           centers[corner].y + sinf(from) * radius };
+
+            vec2_t b   = { centers[corner].x + cosf(to) * radius,
+                           centers[corner].y + sinf(to) * radius };
+
+            blended_vertex(rectangle,
+                           middle,
+                           top_left,
+                           bottom_left,
+                           bottom_right,
+                           top_right);
+
+            blended_vertex(rectangle,
+                           a,
+                           top_left,
+                           bottom_left,
+                           bottom_right,
+                           top_right);
+
+            blended_vertex(rectangle,
+                           b,
+                           top_left,
+                           bottom_left,
+                           bottom_right,
+                           top_right);
+        }
+
+        /*
+         * The straight edge from this arc's end to the next
+         * arc's start. With roundness at one the two meet and
+         * the triangle is degenerate, which costs nothing.
+         */
+        {
+            int   next  = (corner + 1) % 4;
+            float end   = (start_angle[corner] + 90.0f) * DEG2RAD;
+            float begin = start_angle[next] * DEG2RAD;
+
+            vec2_t a    = { centers[corner].x + cosf(end) * radius,
+                            centers[corner].y + sinf(end) * radius };
+
+            vec2_t b    = { centers[next].x + cosf(begin) * radius,
+                            centers[next].y + sinf(begin) * radius };
+
+            blended_vertex(rectangle,
+                           middle,
+                           top_left,
+                           bottom_left,
+                           bottom_right,
+                           top_right);
+
+            blended_vertex(rectangle,
+                           a,
+                           top_left,
+                           bottom_left,
+                           bottom_right,
+                           top_right);
+
+            blended_vertex(rectangle,
+                           b,
+                           top_left,
+                           bottom_left,
+                           bottom_right,
+                           top_right);
+        }
+    }
+
+    graphic_end();
+}
+
+void graphic_draw_rectangle_rounded_lines(rect_t          rectangle,
+                                          const float     roundness[4],
+                                          int             segments,
+                                          graphic_color_t color)
+{
+    graphic_draw_rectangle_rounded_lines_ex(rectangle,
+                                            roundness,
+                                            segments,
+                                            1.0f,
+                                            color);
+}
+
 /* ------------------------------------------------------------------ */
 /* triangles and polygons                                             */
 /* ------------------------------------------------------------------ */

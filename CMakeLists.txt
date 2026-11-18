@@ -154,6 +154,7 @@ add_library(graphic STATIC
     src/graphic_linalg.c
     src/graphic_core.c
     src/graphic_camera.c
+    src/graphic_color.c
     src/graphic_draw.c
     src/graphic_backend.c
     src/graphic_pipeline.c
