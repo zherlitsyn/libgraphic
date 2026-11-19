@@ -6,6 +6,7 @@
 
 #include "graphic_color.h"
 #include "graphic_linalg.h"
+#include "graphic_geometry.h"
 #include "graphic_camera.h"
 
 #ifdef __cplusplus
@@ -47,6 +48,11 @@ void graphic_draw_line_ex(vec2_t          start,
 void graphic_draw_line_strip(const vec2_t   *points,
                              int             point_count,
                              graphic_color_t color);
+
+void graphic_draw_line_bezier(vec2_t          start,
+                              vec2_t          end,
+                              float           thick,
+                              graphic_color_t color);
 
 void graphic_draw_line_dashed(vec2_t          start,
                               vec2_t          end,
@@ -284,6 +290,67 @@ void graphic_draw_poly_lines_ex(vec2_t          center,
                                 float           rotation,
                                 float           line_thick,
                                 graphic_color_t color);
+
+/* ------------------------------------------------------------------ */
+/* splines                                                             */
+/* ------------------------------------------------------------------ */
+
+void graphic_draw_spline_linear(const vec2_t   *points,
+                                int             point_count,
+                                float           thick,
+                                graphic_color_t color);
+
+void graphic_draw_spline_basis(const vec2_t   *points,
+                               int             point_count,
+                               float           thick,
+                               graphic_color_t color);
+
+void graphic_draw_spline_catmull_rom(const vec2_t   *points,
+                                     int             point_count,
+                                     float           thick,
+                                     graphic_color_t color);
+
+void graphic_draw_spline_bezier_quadratic(const vec2_t   *points,
+                                          int             point_count,
+                                          float           thick,
+                                          graphic_color_t color);
+
+void graphic_draw_spline_bezier_cubic(const vec2_t   *points,
+                                      int             point_count,
+                                      float           thick,
+                                      graphic_color_t color);
+
+void graphic_draw_spline_segment_linear(vec2_t          p1,
+                                        vec2_t          p2,
+                                        float           thick,
+                                        graphic_color_t color);
+
+void graphic_draw_spline_segment_basis(vec2_t          p1,
+                                       vec2_t          p2,
+                                       vec2_t          p3,
+                                       vec2_t          p4,
+                                       float           thick,
+                                       graphic_color_t color);
+
+void graphic_draw_spline_segment_catmull_rom(vec2_t          p1,
+                                             vec2_t          p2,
+                                             vec2_t          p3,
+                                             vec2_t          p4,
+                                             float           thick,
+                                             graphic_color_t color);
+
+void graphic_draw_spline_segment_bezier_quadratic(vec2_t          p1,
+                                                  vec2_t          c2,
+                                                  vec2_t          p3,
+                                                  float           thick,
+                                                  graphic_color_t color);
+
+void graphic_draw_spline_segment_bezier_cubic(vec2_t          p1,
+                                              vec2_t          c2,
+                                              vec2_t          c3,
+                                              vec2_t          p4,
+                                              float           thick,
+                                              graphic_color_t color);
 
 #ifdef __cplusplus
 }

@@ -15,6 +15,8 @@
  * segment is added. Half a pixel is below what a display can show.
  */
 #define SMOOTH_CIRCLE_ERROR_RATE    0.5f
+#define SPLINE_SEGMENT_DIVISIONS    24
+#define BEZIER_LINE_DIVISIONS       24
 
 /* ------------------------------------------------------------------ */
 /* helpers                                                            */
@@ -194,6 +196,42 @@ void graphic_draw_line_strip(const vec2_t   *points,
     }
 
     graphic_end();
+}
+
+/*
+ * A wire as node editors draw it, and as raylib's DrawLineBezier()
+ * does: x moves evenly while y eases in and out cubically, so the curve
+ * leaves and arrives level. The first version here was a quadratic
+ * Bezier bent towards the start's height, level at one end only, while
+ * its comment claimed to match raylib.
+ */
+void graphic_draw_line_bezier(vec2_t          start,
+                              vec2_t          end,
+                              float           thick,
+                              graphic_color_t color)
+{
+    vec2_t previous = start;
+
+    for (int i = 1; i <= BEZIER_LINE_DIVISIONS; i++) {
+        float along = (float)i / (float)BEZIER_LINE_DIVISIONS;
+        float t     = 2.0f * along;
+        float ease;
+
+        /* two cubic halves, joined at the middle */
+        if (t < 1.0f) {
+            ease = t * t * t / 2.0f;
+        } else {
+            t -= 2.0f;
+            ease = (t * t * t + 2.0f) / 2.0f;
+        }
+
+        vec2_t current;
+        current.x = start.x + (end.x - start.x) * along;
+        current.y = start.y + (end.y - start.y) * ease;
+
+        graphic_draw_line_ex(previous, current, thick, color);
+        previous = current;
+    }
 }
 
 void graphic_draw_line_dashed(vec2_t          start,
@@ -1353,4 +1391,174 @@ void graphic_draw_poly_lines_ex(vec2_t          center,
         graphic_draw_line_ex(a, b, line_thick, color);
         angle += step;
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* splines                                                             */
+/*                                                                     */
+/* Each segment is flattened into short thick lines. Joins are not     */
+/* mitred, so a sharp corner in a thick spline shows a small notch.    */
+/* ------------------------------------------------------------------ */
+
+void graphic_draw_spline_segment_linear(vec2_t          p1,
+                                        vec2_t          p2,
+                                        float           thick,
+                                        graphic_color_t color)
+{
+    graphic_draw_line_ex(p1, p2, thick, color);
+}
+
+void graphic_draw_spline_segment_basis(vec2_t          p1,
+                                       vec2_t          p2,
+                                       vec2_t          p3,
+                                       vec2_t          p4,
+                                       float           thick,
+                                       graphic_color_t color)
+{
+    vec2_t previous = graphic_spline_point_basis_get(p1, p2, p3, p4, 0.0f);
+
+    for (int i = 1; i <= SPLINE_SEGMENT_DIVISIONS; i++) {
+        float t = (float)i / (float)SPLINE_SEGMENT_DIVISIONS;
+        vec2_t current = graphic_spline_point_basis_get(p1, p2, p3, p4, t);
+
+        graphic_draw_line_ex(previous, current, thick, color);
+        previous = current;
+    }
+}
+
+void graphic_draw_spline_segment_catmull_rom(vec2_t          p1,
+                                             vec2_t          p2,
+                                             vec2_t          p3,
+                                             vec2_t          p4,
+                                             float           thick,
+                                             graphic_color_t color)
+{
+    vec2_t previous = p2;
+
+    for (int i = 1; i <= SPLINE_SEGMENT_DIVISIONS; i++) {
+        float t = (float)i / (float)SPLINE_SEGMENT_DIVISIONS;
+        vec2_t current = graphic_spline_point_catmull_rom_get(p1, p2, p3, p4, t);
+
+        graphic_draw_line_ex(previous, current, thick, color);
+        previous = current;
+    }
+}
+
+void graphic_draw_spline_segment_bezier_quadratic(vec2_t          p1,
+                                                  vec2_t          c2,
+                                                  vec2_t          p3,
+                                                  float           thick,
+                                                  graphic_color_t color)
+{
+    vec2_t previous = p1;
+
+    for (int i = 1; i <= SPLINE_SEGMENT_DIVISIONS; i++) {
+        float t = (float)i / (float)SPLINE_SEGMENT_DIVISIONS;
+        vec2_t current = graphic_spline_point_bezier_quad_get(p1, c2, p3, t);
+
+        graphic_draw_line_ex(previous, current, thick, color);
+        previous = current;
+    }
+}
+
+void graphic_draw_spline_segment_bezier_cubic(vec2_t          p1,
+                                              vec2_t          c2,
+                                              vec2_t          c3,
+                                              vec2_t          p4,
+                                              float           thick,
+                                              graphic_color_t color)
+{
+    vec2_t previous = p1;
+
+    for (int i = 1; i <= SPLINE_SEGMENT_DIVISIONS; i++) {
+        float t = (float)i / (float)SPLINE_SEGMENT_DIVISIONS;
+        vec2_t current = graphic_spline_point_bezier_cubic_get(p1, c2, c3, p4, t);
+
+        graphic_draw_line_ex(previous, current, thick, color);
+        previous = current;
+    }
+}
+
+void graphic_draw_spline_linear(const vec2_t   *points,
+                                int             point_count,
+                                float           thick,
+                                graphic_color_t color)
+{
+    if (points == NULL || point_count < 2)
+        return;
+
+    for (int i = 0; i < point_count - 1; i++)
+        graphic_draw_line_ex(points[i], points[i + 1], thick, color);
+}
+
+/*
+ * A B-spline passes near its control points, not through them: each
+ * segment takes four in a row and runs close to the middle two, so the
+ * curve begins near the second point and ends near the one before last,
+ * as raylib's does. Giving the first and the last point three times
+ * lands the curve exactly on them, leaving and arriving straight.
+ */
+void graphic_draw_spline_basis(const vec2_t   *points,
+                               int             point_count,
+                               float           thick,
+                               graphic_color_t color)
+{
+    if (points == NULL || point_count < 4)
+        return;
+
+    for (int i = 0; i < point_count - 3; i++)
+        graphic_draw_spline_segment_basis(points[i],
+                                          points[i + 1],
+                                          points[i + 2],
+                                          points[i + 3], thick,
+                                          color);
+}
+
+void graphic_draw_spline_catmull_rom(const vec2_t   *points,
+                                     int             point_count,
+                                     float           thick,
+                                     graphic_color_t color)
+{
+    if (points == NULL || point_count < 4)
+        return;
+
+    for (int i = 0; i < point_count - 3; i++)
+        graphic_draw_spline_segment_catmull_rom(points[i],
+                            points[i + 1],
+                            points[i + 2],
+                            points[i + 3], thick,
+                            color);
+}
+
+/* points alternate between on curve and control, as raylib expects */
+void graphic_draw_spline_bezier_quadratic(const vec2_t  *points,
+                                          int            point_count,
+                                          float          thick,
+                                          graphic_color_t color)
+{
+    if (points == NULL || point_count < 3)
+        return;
+
+    for (int i = 0; i < point_count - 2; i += 2)
+        graphic_draw_spline_segment_bezier_quadratic(points[i],
+                                                     points[i + 1],
+                                                     points[i + 2],
+                                                     thick,
+                                                     color);
+}
+
+void graphic_draw_spline_bezier_cubic(const vec2_t   *points,
+                                      int             point_count,
+                                      float           thick,
+                                      graphic_color_t color)
+{
+    if (points == NULL || point_count < 4)
+        return;
+
+    for (int i = 0; i < point_count - 3; i += 3)
+        graphic_draw_spline_segment_bezier_cubic(points[i],
+                             points[i + 1],
+                             points[i + 2],
+                             points[i + 3], thick,
+                             color);
 }

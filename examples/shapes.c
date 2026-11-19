@@ -4,8 +4,9 @@
 #include "graphic.h"
 
 /*
- * A pass over the shape API, one row per family of shapes. It grows
- * along with the library.
+* A pass over the shape API. Every family is drawn once, and the
+* bottom strip is interactive so the intersection tests are exercised
+* against the pointer rather than only compiled.
  */
 
 static const graphic_color_t white = { 245, 245, 245, 255 };
@@ -31,6 +32,11 @@ static void row_lines(float y)
                              8,
                              6,
                              amber);
+
+    graphic_draw_line_bezier((vec2_t){ 370.0f, y - 15.0f },
+                             (vec2_t){ 460.0f, y + 15.0f },
+                             3.0f,
+                             green);
 
     vec2_t strip[5];
     for (int i = 0; i < 5; i++) {
@@ -167,16 +173,82 @@ static void row_polygons(float y)
                                grey);
 }
 
+static void row_splines(float y)
+{
+    vec2_t points[7];
+
+    for (int i = 0; i < 7; i++) {
+        points[i].x = 40.0f + (float)i * 60.0f;
+        points[i].y = y + ((i % 2 == 0) ? -20.0f : 20.0f);
+    }
+
+    graphic_draw_spline_linear(points, 7, 2.0f, grey);
+    graphic_draw_spline_catmull_rom(points, 7, 3.0f, amber);
+    graphic_draw_spline_basis(points, 7, 3.0f, blue);
+
+    for (int i = 0; i < 7; i++)
+        graphic_draw_circle_v(points[i], 3.0f, white);
+}
+
+/* the pointer against a rectangle, a circle and a triangle */
+static void row_collisions(float y)
+{
+    rect_t box = { 60.0f, y - 30.0f, 120.0f, 60.0f };
+    vec2_t circle = { 280.0f, y };
+    vec2_t triangle[3] = {
+        { 420.0f, y - 30.0f },
+        { 380.0f, y + 30.0f },
+        { 470.0f, y + 30.0f },
+    };
+    vec2_t pointer = graphic_mouse_position_get();
+
+    graphic_draw_rectangle_rec(box,
+                               graphic_point_in_rect(pointer, box) ?
+                               green : grey);
+
+    graphic_draw_circle_v(circle,
+                          35.0f,
+                          graphic_point_in_circle(pointer, circle, 35.0f) ?
+                          green : grey);
+
+    graphic_draw_triangle(triangle[0],
+                          triangle[1],
+                          triangle[2],
+                          graphic_point_in_triangle(pointer,
+                                                    triangle[0],
+                                                    triangle[1],
+                                                    triangle[2]) ? green : grey);
+
+    /* a segment the pointer drags a second segment against */
+    vec2_t fixed_start  = { 540.0f, y - 30.0f };
+    vec2_t fixed_end    = { 700.0f, y + 30.0f };
+    vec2_t moving_start = { 540.0f, y + 30.0f };
+    vec2_t hit;
+    bool crossing = graphic_line_collide_line(fixed_start,
+                                              fixed_end,
+                                              moving_start,
+                                              pointer,
+                                              &hit);
+
+    graphic_draw_line_ex(fixed_start, fixed_end, 3.0f, white);
+    graphic_draw_line_ex(moving_start, pointer, 3.0f, crossing ? green : grey);
+
+    if (crossing)
+        graphic_draw_circle_v(hit, 6.0f, red);
+}
+
 int main(void)
 {
     graphic_window_flags_set(GRAPHIC_WINDOW_RESIZABLE |
                              GRAPHIC_WINDOW_VSYNC     |
                              GRAPHIC_WINDOW_VALIDATION);
 
-    if (!graphic_window(960, 480, "graphic - shapes"))
+    if (!graphic_window(1280, 720, "graphic - shapes"))
         return 1;
 
     graphic_fps_target_set(60);
+
+    printf("move the pointer over the bottom row to exercise the intersection tests\n");
 
     while (!graphic_window_should_close()) {
         float time = (float)graphic_time_get();
@@ -190,6 +262,8 @@ int main(void)
         row_circles(150.0f);
         row_rectangles(250.0f, time);
         row_polygons(350.0f);
+        row_splines(470.0f);
+        row_collisions(600.0f);
 
         graphic_drawing_end();
     }
