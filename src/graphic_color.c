@@ -28,6 +28,55 @@ static float clamp_unit(float value)
 }
 
 /* ------------------------------------------------------------------ */
+/* half floats                                                        */
+/*                                                                    */
+/* IEEE 754 binary16, needed only by the R16 family. Denormals are    */
+/* flushed to zero: the formats exist for image data, not arithmetic. */
+/* ------------------------------------------------------------------ */
+
+static float half_to_float(uint16_t half)
+{
+    uint32_t sign     = (uint32_t)(half >> 15) << 31;
+    uint32_t exponent = (half >> 10) & 0x1f;
+    uint32_t mantissa = half & 0x3ff;
+    uint32_t bits;
+    float    result;
+
+    if (exponent == 0) {
+        bits = sign; /* zero or denormal */
+    } else if (exponent == 31) {
+        bits = sign | 0x7f800000u | (mantissa << 13);
+    } else {
+        bits = sign | ((exponent + 112) << 23) | (mantissa << 13);
+    }
+
+    memcpy(&result, &bits, sizeof(result));
+
+    return result;
+}
+
+static uint16_t float_to_half(float value)
+{
+    uint32_t bits;
+    uint32_t sign;
+    int32_t  exponent;
+    uint32_t mantissa;
+
+    memcpy(&bits, &value, sizeof(bits));
+
+    sign     = (bits >> 16) & 0x8000u;
+    exponent = (int32_t)((bits >> 23) & 0xff) - 112;
+    mantissa = bits & 0x7fffffu;
+
+    if (exponent <= 0)
+        return (uint16_t)sign;
+    if (exponent >= 31)
+        return (uint16_t)(sign | 0x7c00u);
+
+    return (uint16_t)(sign | ((uint32_t)exponent << 10) | (mantissa >> 13));
+}
+
+/* ------------------------------------------------------------------ */
 /* colour operations                                                  */
 /* ------------------------------------------------------------------ */
 
@@ -316,4 +365,237 @@ graphic_color_t graphic_color_lerp(graphic_color_t a,
     result.a = clamp_to_byte((float)a.a + ((float)b.a - (float)a.a) * factor);
 
     return result;
+}
+
+/* ------------------------------------------------------------------ */
+/* raw pixels                                                         */
+/* ------------------------------------------------------------------ */
+
+int graphic_pixel_data_size_get(int width, int height, int format)
+{
+    int bytes_per_pixel;
+
+    if (width <= 0 || height <= 0)
+        return 0;
+
+    switch (format) {
+        case GRAPHIC_PIXEL_UNCOMPRESSED_GRAYSCALE:
+            bytes_per_pixel = 1;
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_GRAY_ALPHA:
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R5G6B5:
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R5G5B5A1:
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R4G4B4A4:
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R16:
+            bytes_per_pixel = 2;
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R8G8B8:
+            bytes_per_pixel = 3;
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R8G8B8A8:
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R32:
+            bytes_per_pixel = 4;
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R16G16B16:
+            bytes_per_pixel = 6;
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R16G16B16A16:
+            bytes_per_pixel = 8;
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R32G32B32:
+            bytes_per_pixel = 12;
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R32G32B32A32:
+            bytes_per_pixel = 16;
+            break;
+        default:
+            return 0; /* compressed, or not a format */
+    }
+
+    /*
+     * Bytes rather than bits, and the product checked before it is
+     * formed: width * height * bits overflowed an int already at
+     * 8192 x 8192 RGBA, an ordinary texture size. Zero means the
+     * image does not fit, which every caller treats as failure.
+     */
+    if (width > INT_MAX / bytes_per_pixel / height)
+        return 0;
+
+    return width * height * bytes_per_pixel;
+}
+
+graphic_color_t graphic_pixel_color_get(const void *source, int format)
+{
+    graphic_color_t color  = { 0, 0, 0, 255 };
+    const uint8_t  *bytes  = (const uint8_t *)source;
+    const uint16_t *shorts = (const uint16_t *)source;
+    const float    *floats = (const float *)source;
+
+    if (source == NULL)
+        return color;
+
+    switch (format) {
+        case GRAPHIC_PIXEL_UNCOMPRESSED_GRAYSCALE:
+            color.r = bytes[0];
+            color.g = bytes[0];
+            color.b = bytes[0];
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_GRAY_ALPHA:
+            color.r = bytes[0];
+            color.g = bytes[0];
+            color.b = bytes[0];
+            color.a = bytes[1];
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R5G6B5:
+            /*
+             * 5 and 6 bit channels are scaled, not shifted, so that
+             * the maximum value maps to 255 exactly.
+             */
+            color.r = (uint8_t)((float)((shorts[0] >> 11) & 0x1f) * 255.0f / 31.0f);
+            color.g = (uint8_t)((float)((shorts[0] >>  5) & 0x3f) * 255.0f / 63.0f);
+            color.b = (uint8_t)((float)(shorts[0] & 0x1f) * 255.0f / 31.0f);
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R5G5B5A1:
+            color.r = (uint8_t)((float)((shorts[0] >> 11) & 0x1f) * 255.0f / 31.0f);
+            color.g = (uint8_t)((float)((shorts[0] >>  6) & 0x1f) * 255.0f / 31.0f);
+            color.b = (uint8_t)((float)((shorts[0] >>  1) & 0x1f) * 255.0f / 31.0f);
+            color.a = (shorts[0] & 0x1) ? 255 : 0;
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R4G4B4A4:
+            color.r = (uint8_t)((float)((shorts[0] >> 12) & 0xf) * 255.0f / 15.0f);
+            color.g = (uint8_t)((float)((shorts[0] >>  8) & 0xf) * 255.0f / 15.0f);
+            color.b = (uint8_t)((float)((shorts[0] >>  4) & 0xf) * 255.0f / 15.0f);
+            color.a = (uint8_t)((float)(shorts[0] & 0xf) * 255.0f / 15.0f);
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R8G8B8:
+            color.r = bytes[0];
+            color.g = bytes[1];
+            color.b = bytes[2];
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R8G8B8A8:
+            color.r = bytes[0];
+            color.g = bytes[1];
+            color.b = bytes[2];
+            color.a = bytes[3];
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R32:
+            color.r = clamp_to_byte(clamp_unit(floats[0]) * 255.0f);
+            color.g = color.r;
+            color.b = color.r;
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R32G32B32:
+            color.r = clamp_to_byte(clamp_unit(floats[0]) * 255.0f);
+            color.g = clamp_to_byte(clamp_unit(floats[1]) * 255.0f);
+            color.b = clamp_to_byte(clamp_unit(floats[2]) * 255.0f);
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R32G32B32A32:
+            color.r = clamp_to_byte(clamp_unit(floats[0]) * 255.0f);
+            color.g = clamp_to_byte(clamp_unit(floats[1]) * 255.0f);
+            color.b = clamp_to_byte(clamp_unit(floats[2]) * 255.0f);
+            color.a = clamp_to_byte(clamp_unit(floats[3]) * 255.0f);
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R16:
+            color.r = clamp_to_byte(clamp_unit(half_to_float(shorts[0])) * 255.0f);
+            color.g = color.r;
+            color.b = color.r;
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R16G16B16:
+            color.r = clamp_to_byte(clamp_unit(half_to_float(shorts[0])) * 255.0f);
+            color.g = clamp_to_byte(clamp_unit(half_to_float(shorts[1])) * 255.0f);
+            color.b = clamp_to_byte(clamp_unit(half_to_float(shorts[2])) * 255.0f);
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R16G16B16A16:
+            color.r = clamp_to_byte(clamp_unit(half_to_float(shorts[0])) * 255.0f);
+            color.g = clamp_to_byte(clamp_unit(half_to_float(shorts[1])) * 255.0f);
+            color.b = clamp_to_byte(clamp_unit(half_to_float(shorts[2])) * 255.0f);
+            color.a = clamp_to_byte(clamp_unit(half_to_float(shorts[3])) * 255.0f);
+            break;
+        default:
+            break; /* compressed: nothing to read */
+    }
+
+    return color;
+}
+
+void graphic_pixel_color_set(void           *destination,
+                             graphic_color_t color,
+                             int             format)
+{
+    uint8_t  *bytes  = (uint8_t*)destination;
+    uint16_t *shorts = (uint16_t*)destination;
+    float    *floats = (float*)destination;
+
+    if (destination == NULL)
+        return;
+
+    switch (format) {
+        case GRAPHIC_PIXEL_UNCOMPRESSED_GRAYSCALE:
+            /* the usual luminance weights, not a plain average */
+            bytes[0] = clamp_to_byte((float)color.r * 0.299f +
+                                     (float)color.g * 0.587f +
+                                     (float)color.b * 0.114f);
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_GRAY_ALPHA:
+            bytes[0] = clamp_to_byte((float)color.r * 0.299f +
+                                     (float)color.g * 0.587f +
+                                     (float)color.b * 0.114f);
+            bytes[1] = color.a;
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R5G6B5:
+            shorts[0] = (uint16_t)(((color.r >> 3) << 11) |
+                                   ((color.g >> 2) <<  5) | (color.b >> 3));
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R5G5B5A1:
+            shorts[0] = (uint16_t)(((color.r >> 3) << 11) |
+                                   ((color.g >> 3) <<  6) |
+                                   ((color.b >> 3) <<  1) |
+                                   ((color.a > 127) ? 1 : 0));
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R4G4B4A4:
+            shorts[0] = (uint16_t)(((color.r >> 4) << 12) |
+                                   ((color.g >> 4) <<  8) |
+                                   ((color.b >> 4) <<  4) | (color.a >> 4));
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R8G8B8:
+            bytes[0] = color.r;
+            bytes[1] = color.g;
+            bytes[2] = color.b;
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R8G8B8A8:
+            bytes[0] = color.r;
+            bytes[1] = color.g;
+            bytes[2] = color.b;
+            bytes[3] = color.a;
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R32:
+            floats[0] = (float)color.r / 255.0f;
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R32G32B32:
+            floats[0] = (float)color.r / 255.0f;
+            floats[1] = (float)color.g / 255.0f;
+            floats[2] = (float)color.b / 255.0f;
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R32G32B32A32:
+            floats[0] = (float)color.r / 255.0f;
+            floats[1] = (float)color.g / 255.0f;
+            floats[2] = (float)color.b / 255.0f;
+            floats[3] = (float)color.a / 255.0f;
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R16:
+            shorts[0] = float_to_half((float)color.r / 255.0f);
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R16G16B16:
+            shorts[0] = float_to_half((float)color.r / 255.0f);
+            shorts[1] = float_to_half((float)color.g / 255.0f);
+            shorts[2] = float_to_half((float)color.b / 255.0f);
+            break;
+        case GRAPHIC_PIXEL_UNCOMPRESSED_R16G16B16A16:
+            shorts[0] = float_to_half((float)color.r / 255.0f);
+            shorts[1] = float_to_half((float)color.g / 255.0f);
+            shorts[2] = float_to_half((float)color.b / 255.0f);
+            shorts[3] = float_to_half((float)color.a / 255.0f);
+            break;
+        default:
+            break;
+    }
 }
