@@ -15,6 +15,12 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 option(GRAPHIC_BUILD_EXAMPLES "Build the examples" ON)
+#
+# Decoding and encoding are independent: stb_image.h alone is enough to
+# load PNG and JPEG, so this defaults on. Writing anything but BMP
+# additionally needs stb_image_write.h, picked up when it is present.
+#
+option(GRAPHIC_USE_STB_IMAGE "Decode PNG and JPEG through stb_image.h" ON)
 
 set(THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party")
 
@@ -156,6 +162,7 @@ add_library(graphic STATIC
     src/graphic_camera.c
     src/graphic_geometry.c
     src/graphic_color.c
+    src/graphic_image.c
     src/graphic_draw.c
     src/graphic_backend.c
     src/graphic_pipeline.c
@@ -182,6 +189,16 @@ target_include_directories(graphic
 target_link_libraries(graphic
     PUBLIC Vulkan::Vulkan
     PRIVATE glfw)
+
+if(GRAPHIC_USE_STB_IMAGE AND EXISTS "${THIRD_PARTY_DIR}/stb_image.h")
+	target_compile_definitions(graphic PRIVATE GRAPHIC_USE_STB_IMAGE)
+	message(STATUS "graphic: png and jpeg loading enabled")
+endif()
+
+if(EXISTS "${THIRD_PARTY_DIR}/stb_image_write.h")
+	target_compile_definitions(graphic PRIVATE GRAPHIC_USE_STB_IMAGE_WRITE)
+	message(STATUS "graphic: png export enabled")
+endif()
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(graphic PRIVATE

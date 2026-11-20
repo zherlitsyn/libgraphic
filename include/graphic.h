@@ -7,6 +7,7 @@
 #include "graphic_linalg.h"
 #include "graphic_camera.h"
 #include "graphic_color.h"
+#include "graphic_image.h"
 #include "graphic_input.h"
 #include "graphic_geometry.h"
 #include "graphic_draw.h"
