@@ -269,6 +269,383 @@ graphic_image_t graphic_image_generate_color(int             width,
     return image;
 }
 
+graphic_image_t graphic_image_generate_gradient_linear(int             width,
+                                                       int             height,
+                                                       int             direction,
+                                                       graphic_color_t start,
+                                                       graphic_color_t end)
+{
+    graphic_image_t image = image_blank(width, height);
+
+    if (image.data == NULL)
+        return image;
+
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            float factor;
+
+            if (direction == GRAPHIC_GRADIENT_VERTICAL)
+                factor = (height > 1) ? (float)y / (float)(height - 1) : 0.0f;
+            else
+                factor = (width > 1) ? (float)x / (float)(width - 1) : 0.0f;
+
+            image_pixel_write(&image,
+                              x,
+                              y,
+                              graphic_color_lerp(start, end, factor));
+        }
+    }
+
+    return image;
+}
+
+graphic_image_t graphic_image_generate_gradient_radial(int             width,
+                                                       int             height,
+                                                       float           density,
+                                                       graphic_color_t inner,
+                                                       graphic_color_t outer)
+{
+    graphic_image_t image = image_blank(width, height);
+
+    if (image.data == NULL)
+        return image;
+
+    float center_x = (float)width / 2.0f;
+    float center_y = (float)height / 2.0f;
+    float radius   = (width < height) ? center_x : center_y;
+
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            float dx       = (float)x - center_x;
+            float dy       = (float)y - center_y;
+            float distance = sqrtf(dx * dx + dy * dy);
+            float factor;
+
+            /*
+             * Density pushes the flat inner disc outwards. At
+             * 1 there is no ramp left to divide by, and the
+             * gradient becomes a hard edge.
+             */
+            if (density < 1.0f)
+                factor = (distance -
+                          radius * density) / (radius * (1.0f - density));
+            else
+                factor = (distance < radius) ? 0.0f : 1.0f;
+
+            if (factor < 0.0f)
+                factor = 0.0f;
+            if (factor > 1.0f)
+                factor = 1.0f;
+
+            image_pixel_write(&image,
+                              x,
+                              y,
+                              graphic_color_lerp(inner, outer, factor));
+        }
+    }
+
+    return image;
+}
+
+graphic_image_t graphic_image_generate_gradient_square(int             width,
+                                                       int             height,
+                                                       float           density,
+                                                       graphic_color_t inner,
+                                                       graphic_color_t outer)
+{
+    graphic_image_t image = image_blank(width, height);
+
+    if (image.data == NULL)
+        return image;
+
+    float center_x = (float)width / 2.0f;
+    float center_y = (float)height / 2.0f;
+
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            /*
+             * Chebyshev distance instead of Euclidean, which
+             * is what makes the falloff square.
+             */
+            float dx       = fabsf((float)x - center_x) / center_x;
+            float dy       = fabsf((float)y - center_y) / center_y;
+            float distance = (dx > dy) ? dx : dy;
+            float factor;
+
+            if (density < 1.0f)
+                factor = (distance - density) / (1.0f - density);
+            else
+                factor = (distance < 1.0f) ? 0.0f : 1.0f;
+
+            if (factor < 0.0f)
+                factor = 0.0f;
+            if (factor > 1.0f)
+                factor = 1.0f;
+
+            image_pixel_write(&image,
+                              x,
+                              y,
+                              graphic_color_lerp(inner, outer, factor));
+        }
+    }
+
+    return image;
+}
+
+graphic_image_t graphic_image_generate_checked(int             width,
+                                               int             height,
+                                               int             checks_x,
+                                               int             checks_y,
+                                               graphic_color_t first,
+                                               graphic_color_t second)
+{
+    graphic_image_t image = image_blank(width, height);
+
+    if (image.data == NULL || checks_x <= 0 || checks_y <= 0)
+        return image;
+
+    for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
+            image_pixel_write(&image,
+                              x,
+                              y,
+                              ((x / checks_x + y / checks_y) % 2 == 0) ?
+                              first :
+                              second);
+
+    return image;
+}
+
+/*
+ * A deterministic hash rather than rand(), so the same call always
+ * produces the same image, whatever else the program has been doing
+ * to the global random state.
+ */
+static unsigned int noise_hash(unsigned int x,
+                               unsigned int y,
+                               unsigned int seed)
+{
+    unsigned int h = x * 374761393u + y * 668265263u + seed * 2147483647u;
+
+    h = (h ^ (h >> 13)) * 1274126177u;
+
+    return h ^ (h >> 16);
+}
+
+graphic_image_t graphic_image_generate_white_noise(int   width,
+                                                   int   height,
+                                                   float factor)
+{
+    graphic_image_t image = image_blank(width, height);
+    graphic_color_t white = { 255, 255, 255, 255 };
+    graphic_color_t black = {   0,   0,   0, 255 };
+    int             x;
+    int             y;
+
+    if (image.data == NULL)
+        return image;
+
+    for (y = 0; y < height; y++) {
+        for (x = 0; x < width; x++) {
+            float value = (float)(noise_hash((unsigned int)x,
+                                             (unsigned int)y,
+                                             1u) % 100000u) / 100000.0f;
+
+            image_pixel_write(&image, x, y, (value < factor) ? white : black);
+        }
+    }
+
+    return image;
+}
+
+static float perlin_fade(float t)
+{
+    return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+}
+
+static float perlin_gradient(unsigned int hash, float x, float y)
+{
+    /* eight directions, picked by the low bits of the hash */
+    switch (hash & 7u) {
+        case 0:
+            return x + y;
+        case 1:
+            return -x + y;
+        case 2:
+            return x - y;
+        case 3:
+            return -x - y;
+        case 4:
+            return x;
+        case 5:
+            return -x;
+        case 6:
+            return y;
+        default:
+            return -y;
+    }
+}
+
+graphic_image_t graphic_image_generate_perlin_noise(int   width,
+                                                    int   height,
+                                                    int   offset_x,
+                                                    int   offset_y,
+                                                    float scale)
+{
+    graphic_image_t image = image_blank(width, height);
+
+    if (image.data == NULL)
+        return image;
+
+    if (scale <= 0.0f)
+        scale = 1.0f;
+
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            float           sample_x = (float)(x + offset_x) / scale;
+            float           sample_y = (float)(y + offset_y) / scale;
+            int             cell_x   = (int)floorf(sample_x);
+            int             cell_y   = (int)floorf(sample_y);
+            float           fx       = sample_x - (float)cell_x;
+            float           fy       = sample_y - (float)cell_y;
+            float           u        = perlin_fade(fx);
+            float           v        = perlin_fade(fy);
+
+            float           value;
+            graphic_color_t color;
+            uint8_t         level;
+
+            float n00 = perlin_gradient(noise_hash((unsigned int)cell_x,
+                                                   (unsigned int)cell_y,
+                                                   7u),
+                                        fx,
+                                        fy);
+
+            float n10 = perlin_gradient(noise_hash((unsigned int)cell_x + 1u,
+                                                   (unsigned int)cell_y,
+                                                   7u),
+                                        fx - 1.0f,
+                                        fy);
+
+            float n01 = perlin_gradient(noise_hash((unsigned int)cell_x,
+                                                   (unsigned int)cell_y + 1u,
+                                                   7u),
+                                        fx,
+                                        fy - 1.0f);
+
+            float n11 = perlin_gradient(noise_hash((unsigned int)cell_x + 1u,
+                                                   (unsigned int)cell_y + 1u,
+                                                   7u),
+                                        fx - 1.0f,
+                                        fy - 1.0f);
+
+            value = (n00 + u * (n10 - n00)) + 
+                v * ((n01 + u * (n11 - n01)) - (n00 + u * (n10 - n00)));
+
+            /* map from about [-1, 1] into a grey level */
+            value = (value + 1.0f) * 0.5f;
+            if (value < 0.0f)
+                value = 0.0f;
+            if (value > 1.0f)
+                value = 1.0f;
+
+            level   = (uint8_t)(value * 255.0f);
+            color.r = level;
+            color.g = level;
+            color.b = level;
+            color.a = 255;
+
+            image_pixel_write(&image, x, y, color);
+        }
+    }
+
+    return image;
+}
+
+/* Worley noise: brightness is the distance to the nearest seed point */
+graphic_image_t graphic_image_generate_cellular(int width,
+                                                int height,
+                                                int tile_size)
+{
+    graphic_image_t image = image_blank(width, height);
+
+    if (image.data == NULL || tile_size <= 0)
+        return image;
+
+    int     seeds_x = width  / tile_size + 1;
+    int     seeds_y = height / tile_size + 1;
+    vec2_t *seeds   = (vec2_t*)malloc((size_t)(seeds_x * seeds_y) * sizeof(vec2_t));
+
+    if (seeds == NULL)
+        return image;
+
+    for (int i = 0; i < seeds_x * seeds_y; i++) {
+        int tile_x = i % seeds_x;
+        int tile_y = i / seeds_x;
+        unsigned int hash = noise_hash((unsigned int)tile_x,
+                                       (unsigned int)tile_y,
+                                       3u);
+
+        seeds[i].x = (float)(tile_x *
+                             tile_size + (int)(hash % (unsigned int)tile_size));
+        seeds[i].y = (float)(tile_y * tile_size +
+                             (int)((hash >> 8) % (unsigned int)tile_size));
+    }
+
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            int             tile_x  = x / tile_size;
+            int             tile_y  = y / tile_size;
+            float           nearest = (float)(tile_size * 2);
+
+            /*
+             * A seed outside the nine neighbouring tiles is more
+             * than a tile away, where the brightness has already
+             * saturated, so searching only those nine is exact
+             * and keeps the cost per pixel constant.
+             */
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dx = -1; dx <= 1; dx++) {
+                    int    nx = tile_x + dx;
+                    int    ny = tile_y + dy;
+                    float  distance;
+                    vec2_t seed;
+
+                    if (nx < 0 || ny < 0 || nx >= seeds_x || ny >= seeds_y)
+                        continue;
+
+                    seed = seeds[ny * seeds_x + nx];
+                    distance = sqrtf(((float)x - seed.x) * ((float)x - seed.x) +
+                                     ((float)y - seed.y) * ((float)y - seed.y));
+
+                    if (distance < nearest)
+                        nearest = distance;
+                }
+            }
+
+            /*
+             * The nearest seed can be up to a tile diagonal
+             * away, past what fits in a byte, and converting
+             * an out of range float to an integer is undefined.
+             */
+            nearest = nearest * 255.0f / (float)tile_size;
+            uint8_t level = (uint8_t)((nearest < 255.0f) ? nearest : 255.0f);
+
+            graphic_color_t color;
+            color.r = level;
+            color.g = level;
+            color.b = level;
+            color.a = 255;
+
+            image_pixel_write(&image, x, y, color);
+        }
+    }
+
+    free(seeds);
+
+    return image;
+}
+
 /* ------------------------------------------------------------------ */
 /* queries                                                            */
 /* ------------------------------------------------------------------ */

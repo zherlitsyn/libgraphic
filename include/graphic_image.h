@@ -30,6 +30,11 @@ typedef struct graphic_image {
     int   format;  /* enum graphic_pixel_format */
 } graphic_image_t;
 
+enum graphic_gradient_direction {
+    GRAPHIC_GRADIENT_HORIZONTAL = 0,
+    GRAPHIC_GRADIENT_VERTICAL,
+};
+
 /* ------------------------------------------------------------------ */
 /* loading and saving                                                 */
 /* ------------------------------------------------------------------ */
@@ -64,9 +69,48 @@ bool            graphic_image_export_as_code   (graphic_image_t image,
 /* generation                                                         */
 /* ------------------------------------------------------------------ */
 
-graphic_image_t graphic_image_generate_color (int             width,
-                                              int             height,
-                                              graphic_color_t color);
+graphic_image_t graphic_image_generate_color           (int             width,
+                                                        int             height,
+                                                        graphic_color_t color);
+
+graphic_image_t graphic_image_generate_gradient_linear (int             width,
+                                                        int             height,
+                                                        int             direction,
+                                                        graphic_color_t start,
+                                                        graphic_color_t end);
+
+graphic_image_t graphic_image_generate_gradient_radial (int             width,
+                                                        int             height,
+                                                        float           density,
+                                                        graphic_color_t inner,
+                                                        graphic_color_t outer);
+
+graphic_image_t graphic_image_generate_gradient_square (int             width,
+                                                        int             height,
+                                                        float           density,
+                                                        graphic_color_t inner,
+                                                        graphic_color_t outer);
+
+graphic_image_t graphic_image_generate_checked (int             width,
+                                                int             height,
+                                                int             checks_x,
+                                                int             checks_y,
+                                                graphic_color_t first,
+                                                graphic_color_t second);
+
+graphic_image_t graphic_image_generate_white_noise     (int   width,
+                                                        int   height,
+                                                        float factor);
+
+graphic_image_t graphic_image_generate_perlin_noise    (int   width,
+                                                        int   height,
+                                                        int   offset_x,
+                                                        int   offset_y,
+                                                        float scale);
+
+graphic_image_t graphic_image_generate_cellular        (int width,
+                                                        int height,
+                                                        int tile_size);
 
 /* ------------------------------------------------------------------ */
 /* queries                                                            */
