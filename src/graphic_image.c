@@ -159,6 +159,17 @@ graphic_image_t graphic_image_copy(graphic_image_t image)
     return copy;
 }
 
+graphic_image_t graphic_image_from_image(graphic_image_t image,
+                                         rect_t          rectangle)
+{
+    graphic_image_t result;
+
+    result = graphic_image_copy(image);
+    graphic_image_crop(&result, rectangle);
+
+    return result;
+}
+
 /* channel 0 is red, 3 is alpha; the result is a grayscale image */
 graphic_image_t graphic_image_from_channel(graphic_image_t image,
                                            int             channel)
@@ -658,6 +669,664 @@ graphic_color_t graphic_image_color_get(graphic_image_t image, int x, int y)
         return clear;
 
     return image_pixel_read(&image, x, y);
+}
+
+/*
+ * The threshold is a fraction of full alpha. Clamped first, because
+ * converting a float outside the byte range to uint8_t is undefined.
+ */
+static uint8_t alpha_limit_get(float threshold)
+{
+    if (threshold <= 0.0f)
+        return 0;
+    if (threshold >= 1.0f)
+        return 255;
+
+    return (uint8_t)(threshold * 255.0f);
+}
+
+/* the smallest rectangle holding every pixel above the alpha threshold */
+rect_t graphic_image_alpha_border_get(graphic_image_t image, float threshold)
+{
+    rect_t  border = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+    if (!image_usable(&image))
+        return border;
+
+    int     max_x = -1;
+    int     max_y = -1;
+    int     min_x = image.width;
+    int     min_y = image.height;
+    uint8_t limit = alpha_limit_get(threshold);
+
+    for (int y = 0; y < image.height; y++) {
+        for (int x = 0; x < image.width; x++) {
+            if (image_pixel_read(&image, x, y).a <= limit)
+                continue;
+
+            if (x < min_x)
+                min_x = x;
+            if (y < min_y)
+                min_y = y;
+            if (x > max_x)
+                max_x = x;
+            if (y > max_y)
+                max_y = y;
+        }
+    }
+
+    if (max_x < min_x || max_y < min_y)
+        return border; /* fully transparent */
+
+    border.x      = (float)min_x;
+    border.y      = (float)min_y;
+    border.width  = (float)(max_x - min_x + 1);
+    border.height = (float)(max_y - min_y + 1);
+
+    return border;
+}
+
+graphic_color_t *graphic_image_colors_load(graphic_image_t image)
+{
+    graphic_color_t *colors;
+
+    if (!image_usable(&image))
+        return NULL;
+
+    int count = image.width * image.height;
+
+    colors = (graphic_color_t *)malloc((size_t)count * sizeof(graphic_color_t));
+    if (colors == NULL)
+        return NULL;
+
+    for (int i = 0; i < count; i++)
+        colors[i] = image_pixel_read(&image, i % image.width, i / image.width);
+
+    return colors;
+}
+
+void graphic_image_colors_free(graphic_color_t *colors)
+{
+    free(colors);
+}
+
+/*
+ * A linear scan against the palette collected so far. Quadratic in the
+ * palette size, but the palette is capped at a few hundred entries and
+ * this runs once, not per frame.
+ */
+graphic_color_t *graphic_image_palette_load(graphic_image_t image,
+                                            int             max_palette_size,
+                                            int            *color_count)
+{
+    graphic_color_t *palette;
+    
+    if (color_count != NULL)
+        *color_count = 0;
+
+    if (!image_usable(&image) || max_palette_size <= 0)
+        return NULL;
+
+    palette = (graphic_color_t *)calloc((size_t)max_palette_size,
+                                        sizeof(graphic_color_t));
+    if (palette == NULL)
+        return NULL;
+
+    int total = image.width * image.height;
+    int count = 0;
+
+    for (int i = 0; i < total && count < max_palette_size; i++) {
+        graphic_color_t color = image_pixel_read(&image,
+                                                 i % image.width,
+                                                 i / image.width);
+
+        if (color.a == 0)
+            continue; /* fully transparent is not a colour */
+
+        bool seen = false;
+
+        for (int j = 0; j < count; j++) {
+            if (graphic_color_is_equal(palette[j], color)) {
+                seen = true;
+                break;
+            }
+        }
+
+        if (!seen)
+            palette[count++] = color;
+    }
+
+    if (color_count != NULL)
+        *color_count = count;
+
+    return palette;
+}
+
+void graphic_image_palette_free(graphic_color_t *colors)
+{
+    free(colors);
+}
+
+/* ------------------------------------------------------------------ */
+/* geometry operations                                                */
+/* ------------------------------------------------------------------ */
+
+/* the shared tail of every operation that replaces the pixel buffer */
+static void image_replace(graphic_image_t *image, graphic_image_t built)
+{
+    if (built.data == NULL)
+        return;
+
+    free(image->data);
+    *image = built;
+}
+
+void graphic_image_crop(graphic_image_t *image, rect_t crop)
+{
+    graphic_image_t result;
+
+    if (!image_usable(image))
+        return;
+
+    int left   = (int)crop.x;
+    int top    = (int)crop.y;
+    int width  = (int)crop.width;
+    int height = (int)crop.height;
+
+    /*
+     * Clamp rather than refuse: a crop hanging off the edge is a
+     * routine result of arithmetic on a rectangle.
+     */
+    if (left < 0)
+        left = 0;
+    if (top < 0)
+        top = 0;
+    if (left + width > image->width)
+        width = image->width - left;
+    if (top + height > image->height)
+        height = image->height - top;
+    if (width <= 0 || height <= 0)
+        return;
+
+    result = image_blank(width, height);
+    if (result.data == NULL)
+        return;
+
+    graphic_image_format(&result, image->format);
+
+    for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
+            image_pixel_write(&result,
+                              x,
+                              y,
+                              image_pixel_read(image, left + x, top + y));
+
+    image_replace(image, result);
+}
+
+void graphic_image_alpha_crop(graphic_image_t *image, float threshold)
+{
+    rect_t border;
+
+    if (!image_usable(image))
+        return;
+
+    border = graphic_image_alpha_border_get(*image, threshold);
+
+    if (border.width > 0.0f && border.height > 0.0f)
+        graphic_image_crop(image, border);
+}
+
+void graphic_image_alpha_clear(graphic_image_t *image,
+                               graphic_color_t  color,
+                               float            threshold)
+{
+    if (!image_usable(image))
+        return;
+
+    uint8_t limit = alpha_limit_get(threshold);
+
+    for (int y = 0; y < image->height; y++)
+        for (int x = 0; x < image->width; x++)
+            if (image_pixel_read(image, x, y).a <= limit)
+                image_pixel_write(image, x, y, color);
+}
+
+void graphic_image_alpha_mask(graphic_image_t *image,
+                              graphic_image_t  alpha_mask)
+{
+    if (!image_usable(image) || !image_usable(&alpha_mask))
+        return;
+
+    if (image->width != alpha_mask.width || image->height != alpha_mask.height)
+        return; /* sizes must match, no scaling here */
+
+    for (int y = 0; y < image->height; y++) {
+        for (int x = 0; x < image->width; x++) {
+            graphic_color_t color = image_pixel_read(image, x, y);
+            graphic_color_t mask  = image_pixel_read(&alpha_mask, x, y);
+
+            /*
+             * The mask is read as grey, so its red channel is
+             * as good as its luminance.
+             */
+            color.a = mask.r;
+            image_pixel_write(image, x, y, color);
+        }
+    }
+}
+
+void graphic_image_alpha_premultiply(graphic_image_t *image)
+{
+    if (!image_usable(image))
+        return;
+
+    for (int y = 0; y < image->height; y++) {
+        for (int x = 0; x < image->width; x++) {
+            graphic_color_t color = image_pixel_read(image, x, y);
+            float           alpha = (float)color.a / 255.0f;
+
+            color.r = (uint8_t)((float)color.r * alpha);
+            color.g = (uint8_t)((float)color.g * alpha);
+            color.b = (uint8_t)((float)color.b * alpha);
+
+            image_pixel_write(image, x, y, color);
+        }
+    }
+}
+
+void graphic_image_resize(graphic_image_t *image,
+                          int              new_width,
+                          int              new_height)
+{
+    graphic_image_t result;
+
+    if (!image_usable(image) || new_width <= 0 || new_height <= 0)
+        return;
+
+    result = image_blank(new_width, new_height);
+    if (result.data == NULL)
+        return;
+
+    graphic_image_format(&result, image->format);
+
+    for (int y = 0; y < new_height; y++) {
+        for (int x = 0; x < new_width; x++) {
+            /*
+             * Sample at pixel centres, so the edges do not
+             * drift by half a texel when scaling up.
+             */
+            float sx = ((float)x +
+                        0.5f) * (float)image->width / (float)new_width - 0.5f;
+            float sy = ((float)y +
+                        0.5f) * (float)image->height / (float)new_height - 0.5f;
+
+            int x0 = (int)floorf(sx);
+            if (x0 < 0)
+                x0 = 0;
+
+            int y0 = (int)floorf(sy);
+            if (y0 < 0)
+                y0 = 0;
+
+            int x1 = x0 + 1;
+            if (x1 > image->width - 1)
+                x1 = image->width - 1;
+
+            int y1 = y0 + 1;
+            if (y1 > image->height - 1)
+                y1 = image->height - 1;
+
+            graphic_color_t c00 = image_pixel_read(image, x0, y0);
+            graphic_color_t c10 = image_pixel_read(image, x1, y0);
+            graphic_color_t c01 = image_pixel_read(image, x0, y1);
+            graphic_color_t c11 = image_pixel_read(image, x1, y1);
+
+            float fx = sx - (float)x0;
+            float fy = sy - (float)y0;
+
+            graphic_color_t top    = graphic_color_lerp(c00, c10, fx);
+            graphic_color_t bottom = graphic_color_lerp(c01, c11, fx);
+
+            image_pixel_write(&result,
+                              x,
+                              y,
+                              graphic_color_lerp(top, bottom, fy));
+        }
+    }
+
+    image_replace(image, result);
+}
+
+void graphic_image_resize_nn(graphic_image_t *image,
+                             int              new_width,
+                             int              new_height)
+{
+    graphic_image_t result;
+
+    if (!image_usable(image) || new_width <= 0 || new_height <= 0)
+        return;
+
+    result = image_blank(new_width, new_height);
+    if (result.data == NULL)
+        return;
+
+    graphic_image_format(&result, image->format);
+
+    for (int y = 0; y < new_height; y++) {
+        for (int x = 0; x < new_width; x++) {
+            int sx = x * image->width / new_width;
+            int sy = y * image->height / new_height;
+
+            image_pixel_write(&result, x, y, image_pixel_read(image, sx, sy));
+        }
+    }
+
+    image_replace(image, result);
+}
+
+void graphic_image_resize_canvas(graphic_image_t *image,
+                                 int              new_width,
+                                 int              new_height,
+                                 int              offset_x,
+                                 int              offset_y,
+                                 graphic_color_t  fill)
+{
+    graphic_image_t result;
+
+    if (!image_usable(image) || new_width <= 0 || new_height <= 0)
+        return;
+
+    result = image_blank(new_width, new_height);
+    if (result.data == NULL)
+        return;
+
+    graphic_image_format(&result, image->format);
+
+    for (int y = 0; y < new_height; y++)
+        for (int x = 0; x < new_width; x++)
+            image_pixel_write(&result, x, y, fill);
+
+    for (int y = 0; y < image->height; y++)
+        for (int x = 0; x < image->width; x++)
+            image_pixel_write(&result,
+                              x + offset_x,
+                              y + offset_y,
+                              image_pixel_read(image, x, y));
+
+    image_replace(image, result);
+}
+
+static int next_power_of_two(int value)
+{
+    int result = 1;
+
+    while (result < value)
+        result *= 2;
+
+    return result;
+}
+
+void graphic_image_to_pot(graphic_image_t *image, graphic_color_t fill)
+{
+    if (!image_usable(image))
+        return;
+
+    int width  = next_power_of_two(image->width);
+    int height = next_power_of_two(image->height);
+
+    if (width == image->width && height == image->height)
+        return;
+
+    graphic_image_resize_canvas(image, width, height, 0, 0, fill);
+}
+
+void graphic_image_flip_vertical(graphic_image_t *image)
+{
+    graphic_image_t result;
+
+    if (!image_usable(image))
+        return;
+
+    result = image_blank(image->width, image->height);
+    if (result.data == NULL)
+        return;
+
+    graphic_image_format(&result, image->format);
+
+    for (int y = 0; y < image->height; y++)
+        for (int x = 0; x < image->width; x++)
+            image_pixel_write(&result,
+                              x,
+                              image->height - 1 - y,
+                              image_pixel_read(image, x, y));
+
+    image_replace(image, result);
+}
+
+void graphic_image_flip_horizontal(graphic_image_t *image)
+{
+    graphic_image_t result;
+
+    if (!image_usable(image))
+        return;
+
+    result = image_blank(image->width, image->height);
+    if (result.data == NULL)
+        return;
+
+    graphic_image_format(&result, image->format);
+
+    for (int y = 0; y < image->height; y++)
+        for (int x = 0; x < image->width; x++)
+            image_pixel_write(&result,
+                              image->width - 1 - x,
+                              y,
+                              image_pixel_read(image, x, y));
+
+    image_replace(image, result);
+}
+
+/*
+ * Rotation by an arbitrary angle keeps the original size, so corners
+ * are lost and the edges gain transparent pixels. The quarter turns
+ * below are separate because they are exact and change the size.
+ */
+void graphic_image_rotate(graphic_image_t *image, int degrees)
+{
+    graphic_image_t result;
+
+    if (!image_usable(image))
+        return;
+
+    degrees = ((degrees % 360) + 360) % 360;
+
+    if (degrees == 0)
+        return;
+    if (degrees == 90) {
+        graphic_image_rotate_cw(image);
+        return;
+    }
+    if (degrees == 180) {
+        graphic_image_flip_horizontal(image);
+        graphic_image_flip_vertical(image);
+        return;
+    }
+    if (degrees == 270) {
+        graphic_image_rotate_ccw(image);
+        return;
+    }
+
+    result = image_blank(image->width, image->height);
+    if (result.data == NULL)
+        return;
+
+    graphic_image_format(&result, image->format);
+
+    float radians   = (float)degrees * DEG2RAD;
+    float sin_angle = sinf(radians);
+    float cos_angle = cosf(radians);
+    float center_x  = (float)image->width / 2.0f;
+    float center_y  = (float)image->height / 2.0f;
+
+    for (int y = 0; y < image->height; y++) {
+        for (int x = 0; x < image->width; x++) {
+            /*
+             * Sampled backwards from the destination, which
+             * is what keeps the result free of holes. Pixel
+             * centres sit at half integers, and floorf()
+             * rather than a cast: truncation towards zero
+             * pulled samples from just outside the left and
+             * top edges back onto them, so only those two
+             * edges came out smeared.
+             */
+            float dx = (float)x + 0.5f - center_x;
+            float dy = (float)y + 0.5f - center_y;
+            int   sx = (int)floorf(dx * cos_angle + dy * sin_angle + center_x);
+            int   sy = (int)floorf(-dx * sin_angle + dy * cos_angle + center_y);
+
+            if (sx < 0 || sy < 0 || sx >= image->width || sy >= image->height)
+                continue;
+
+            image_pixel_write(&result, x, y, image_pixel_read(image, sx, sy));
+        }
+    }
+
+    image_replace(image, result);
+}
+
+void graphic_image_rotate_cw(graphic_image_t *image)
+{
+    graphic_image_t result;
+
+    if (!image_usable(image))
+        return;
+
+    result = image_blank(image->height, image->width);
+    if (result.data == NULL)
+        return;
+
+    graphic_image_format(&result, image->format);
+
+    for (int y = 0; y < image->height; y++)
+        for (int x = 0; x < image->width; x++)
+            image_pixel_write(&result,
+                              image->height - 1 - y,
+                              x,
+                              image_pixel_read(image, x, y));
+
+    image_replace(image, result);
+}
+
+void graphic_image_rotate_ccw(graphic_image_t *image)
+{
+    graphic_image_t result;
+
+    if (!image_usable(image))
+        return;
+
+    result = image_blank(image->height, image->width);
+    if (result.data == NULL)
+        return;
+
+    graphic_image_format(&result, image->format);
+
+    for (int y = 0; y < image->height; y++)
+        for (int x = 0; x < image->width; x++)
+            image_pixel_write(&result,
+                              y,
+                              image->width - 1 - x,
+                              image_pixel_read(image, x, y));
+
+    image_replace(image, result);
+}
+
+/* ------------------------------------------------------------------ */
+/* drawing into an image                                              */
+/* ------------------------------------------------------------------ */
+
+void graphic_image_clear_background(graphic_image_t *destination,
+                                    graphic_color_t  color)
+{
+    if (!image_usable(destination))
+        return;
+
+    for (int y = 0; y < destination->height; y++)
+        for (int x = 0; x < destination->width; x++)
+            image_pixel_write(destination, x, y, color);
+}
+
+/*
+ * Writes rather than blends. Only graphic_image_draw composites,
+ * because that is the one call where a source alpha is meaningful.
+ */
+void graphic_image_draw_pixel(graphic_image_t *destination,
+                              int              x,
+                              int              y,
+                              graphic_color_t  color)
+{
+    if (!image_usable(destination))
+        return;
+
+    image_pixel_write(destination, x, y, color);
+}
+
+void graphic_image_draw_pixel_v(graphic_image_t *destination,
+                                vec2_t           position,
+                                graphic_color_t  color)
+{
+    graphic_image_draw_pixel(destination,
+                             (int)position.x,
+                             (int)position.y,
+                             color);
+}
+
+void graphic_image_draw_rectangle_rec(graphic_image_t *destination,
+                                      rect_t           rectangle,
+                                      graphic_color_t  color)
+{
+    if (!image_usable(destination))
+        return;
+
+    int left   = (int)rectangle.x;
+    int top    = (int)rectangle.y;
+    int right  = left + (int)rectangle.width;
+    int bottom = top + (int)rectangle.height;
+
+    if (left < 0)
+        left = 0;
+    if (top < 0)
+        top = 0;
+    if (right > destination->width)
+        right = destination->width;
+    if (bottom > destination->height)
+        bottom = destination->height;
+
+    for (int y = top; y < bottom; y++)
+        for (int x = left; x < right; x++)
+            image_pixel_write(destination, x, y, color);
+}
+
+void graphic_image_draw_rectangle(graphic_image_t *destination,
+                                  int              x,
+                                  int              y,
+                                  int              width,
+                                  int              height,
+                                  graphic_color_t  color)
+{
+    rect_t rectangle = { (float)x, (float)y, (float)width, (float)height };
+
+    graphic_image_draw_rectangle_rec(destination, rectangle, color);
+}
+
+void graphic_image_draw_rectangle_v(graphic_image_t *destination,
+                                    vec2_t           position,
+                                    vec2_t           size,
+                                    graphic_color_t  color)
+{
+    rect_t rectangle = { position.x, position.y, size.x, size.y };
+
+    graphic_image_draw_rectangle_rec(destination, rectangle, color);
 }
 
 /* ------------------------------------------------------------------ */

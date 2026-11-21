@@ -116,7 +116,22 @@ graphic_image_t graphic_image_generate_cellular        (int width,
 /* queries                                                            */
 /* ------------------------------------------------------------------ */
 
-graphic_color_t graphic_image_color_get(graphic_image_t image, int x, int y);
+graphic_color_t  graphic_image_color_get        (graphic_image_t image,
+                                                 int             x,
+                                                 int             y);
+
+rect_t           graphic_image_alpha_border_get (graphic_image_t image,
+                                                 float           threshold);
+
+graphic_color_t *graphic_image_colors_load      (graphic_image_t image);
+
+void             graphic_image_colors_free      (graphic_color_t *colors);
+
+graphic_color_t *graphic_image_palette_load (graphic_image_t image,
+                                             int             max_palette_size,
+                                             int            *color_count);
+
+void             graphic_image_palette_free     (graphic_color_t *colors);
 
 /* ------------------------------------------------------------------ */
 /* whole image operations                                             */
@@ -125,13 +140,96 @@ graphic_color_t graphic_image_color_get(graphic_image_t image, int x, int y);
 /* reallocating its pixels as needed.                                 */
 /* ------------------------------------------------------------------ */
 
-graphic_image_t graphic_image_copy         (graphic_image_t image);
+graphic_image_t graphic_image_copy              (graphic_image_t image);
 
-graphic_image_t graphic_image_from_channel (graphic_image_t image,
-                                            int             channel);
+graphic_image_t graphic_image_from_image        (graphic_image_t image,
+                                                 rect_t          rectangle);
 
-void            graphic_image_format       (graphic_image_t *image,
-                                            int              new_format);
+graphic_image_t graphic_image_from_channel      (graphic_image_t image,
+                                                 int             channel);
+
+void            graphic_image_format            (graphic_image_t *image,
+                                                 int              new_format);
+
+void            graphic_image_to_pot            (graphic_image_t *image,
+                                                 graphic_color_t  fill);
+
+void            graphic_image_crop              (graphic_image_t *image,
+                                                 rect_t           crop);
+
+void            graphic_image_alpha_crop        (graphic_image_t *image,
+                                                 float            threshold);
+
+void            graphic_image_alpha_clear       (graphic_image_t *image,
+                                                 graphic_color_t  color,
+                                                 float            threshold);
+
+void            graphic_image_alpha_mask        (graphic_image_t *image,
+                                                 graphic_image_t  alpha_mask);
+
+void            graphic_image_alpha_premultiply (graphic_image_t *image);
+
+void            graphic_image_resize            (graphic_image_t *image,
+                                                 int              new_width,
+                                                 int              new_height);
+
+void            graphic_image_resize_nn         (graphic_image_t *image,
+                                                 int              new_width,
+                                                 int              new_height);
+
+void            graphic_image_resize_canvas     (graphic_image_t *image,
+                                                 int              new_width,
+                                                 int              new_height,
+                                                 int              offset_x,
+                                                 int              offset_y,
+                                                 graphic_color_t  fill);
+
+void            graphic_image_flip_vertical     (graphic_image_t *image);
+
+void            graphic_image_flip_horizontal   (graphic_image_t *image);
+
+void            graphic_image_rotate            (graphic_image_t *image,
+                                                 int              degrees);
+
+void            graphic_image_rotate_cw         (graphic_image_t *image);
+
+void            graphic_image_rotate_ccw        (graphic_image_t *image);
+
+/* ------------------------------------------------------------------ */
+/* drawing into an image                                              */
+/*                                                                    */
+/* The CPU twin of graphic_draw_*. Same shapes, no GPU involved, so   */
+/* these work before a window exists and are the way to build an      */
+/* image that will later become a texture.                            */
+/* ------------------------------------------------------------------ */
+
+void graphic_image_clear_background   (graphic_image_t *destination,
+                                       graphic_color_t  color);
+
+void graphic_image_draw_pixel         (graphic_image_t *destination,
+                                       int              x,
+                                       int              y,
+                                       graphic_color_t  color);
+
+void graphic_image_draw_pixel_v       (graphic_image_t *destination,
+                                       vec2_t           position,
+                                       graphic_color_t  color);
+
+void graphic_image_draw_rectangle     (graphic_image_t *destination,
+                                       int              x,
+                                       int              y,
+                                       int              width,
+                                       int              height,
+                                       graphic_color_t  color);
+
+void graphic_image_draw_rectangle_v   (graphic_image_t *destination,
+                                       vec2_t           position,
+                                       vec2_t           size,
+                                       graphic_color_t  color);
+
+void graphic_image_draw_rectangle_rec (graphic_image_t *destination,
+                                       rect_t           rectangle,
+                                       graphic_color_t  color);
 
 #ifdef __cplusplus
 }
